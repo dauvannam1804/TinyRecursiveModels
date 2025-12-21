@@ -23,10 +23,13 @@ class Trainer:
         )
         
         self.criterion = nn.CrossEntropyLoss(ignore_index=-100)
+        self.bce_criterion = nn.BCELoss() # For Q-head
         
     def train(self):
         print(f"Starting training on {self.device}...")
         self.model.train()
+        
+        history = {"train_loss": [], "val_loss": []}
         
         for epoch in range(self.config.train.num_epochs):
             total_loss = 0
@@ -37,44 +40,101 @@ class Trainer:
                 attention_mask = batch["attention_mask"].to(self.device)
                 labels = batch["labels"].to(self.device)
                 
-                self.optimizer.zero_grad()
+                # Initialize y and z
+                batch_size, seq_len = input_ids.size()
+                y = torch.zeros(batch_size, seq_len, self.config.model.d_model, device=self.device)
+                z = torch.zeros(batch_size, seq_len, self.config.model.d_model, device=self.device)
                 
-                # Forward pass
-                # outputs shape: [n_recurrence, batch, seq_len, vocab_size]
-                outputs = self.model(input_ids, attention_mask)
+                batch_loss = 0
                 
-                # Deep Supervision Loss
-                loss = 0
-                n_steps = outputs.shape[0]
+                # Deep Supervision Loop
+                for step in range(self.config.model.n_supervision_steps):
+                    # Forward pass
+                    (y, z), logits, q_hat = self.model(input_ids, attention_mask, y_init=y, z_init=z)
+                    
+                    # Calculate Loss
+                    # 1. Classification Loss
+                    loss = self.criterion(logits.view(-1, self.config.model.vocab_size), labels.view(-1))
+                    
+                    # 2. ACT Loss (Q-head)
+                    # Target: 1 if prediction is correct, 0 otherwise
+                    # We need to compute y_hat == y_true
+                    with torch.no_grad():
+                        preds = torch.argmax(logits, dim=-1)
+                        # Mask out padding/ignore index
+                        valid_mask = labels != -100
+                        correct = (preds == labels) & valid_mask
+                        target_halt = correct.float()
+                    
+                    # Only compute BCE on valid tokens
+                    # q_hat is [batch, seq_len]
+                    if valid_mask.any():
+                        act_loss = self.bce_criterion(q_hat[valid_mask], target_halt[valid_mask])
+                        loss += act_loss
+                    
+                    # Backward & Step
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.train.grad_clip)
+                    self.optimizer.step()
+                    self.optimizer.zero_grad()
+                    
+                    batch_loss += loss.item()
+                    
+                    # Early stopping based on Q-head (optional, as per pseudocode "if q_hat > 0: break")
+                    # Pseudocode says q_hat > 0, but q_hat is prob. Maybe logit > 0?
+                    # Or mean prob > threshold?
+                    # Let's skip early stopping for now to ensure full training or implement simple check.
+                    # if q_hat.mean() > 0.9: break 
                 
-                # We can weight the loss at each step differently if we want
-                # For now, uniform weighting or just sum
-                for step in range(n_steps):
-                    step_logits = outputs[step]
-                    # Flatten for CrossEntropyLoss
-                    step_loss = self.criterion(step_logits.view(-1, self.config.model.vocab_size), labels.view(-1))
-                    loss += step_loss
-                
-                # Normalize loss by number of steps if needed, or keep as sum
-                loss = loss / n_steps
-                
-                loss.backward()
-                
-                # Gradient Clipping
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.train.grad_clip)
-                
-                self.optimizer.step()
-                
-                total_loss += loss.item()
-                progress_bar.set_postfix({"loss": loss.item()})
-                
-                # TODO: Add wandb logging here
+                total_loss += batch_loss / self.config.model.n_supervision_steps
+                progress_bar.set_postfix({"loss": batch_loss / self.config.model.n_supervision_steps})
                 
             avg_loss = total_loss / len(self.train_loader)
-            print(f"Epoch {epoch+1} completed. Avg Loss: {avg_loss:.4f}")
+            history["train_loss"].append(avg_loss)
+            print(f"Epoch {epoch+1} Train Loss: {avg_loss:.4f}")
+            
+            # Validation
+            if self.val_loader:
+                val_loss = self.evaluate()
+                history["val_loss"].append(val_loss)
+                print(f"Epoch {epoch+1} Val Loss: {val_loss:.4f}")
+            else:
+                history["val_loss"].append(None)
             
             if self.config.train.output_dir:
                 self.save_checkpoint(epoch, avg_loss)
+                self.save_history(history)
+
+    def evaluate(self):
+        self.model.eval()
+        total_loss = 0
+        with torch.no_grad():
+            for batch in tqdm(self.val_loader, desc="Validating"):
+                input_ids = batch["input_ids"].to(self.device)
+                attention_mask = batch["attention_mask"].to(self.device)
+                labels = batch["labels"].to(self.device)
+                
+                batch_size, seq_len = input_ids.size()
+                y = torch.zeros(batch_size, seq_len, self.config.model.d_model, device=self.device)
+                z = torch.zeros(batch_size, seq_len, self.config.model.d_model, device=self.device)
+                
+                batch_loss = 0
+                for step in range(self.config.model.n_supervision_steps):
+                    (y, z), logits, q_hat = self.model(input_ids, attention_mask, y_init=y, z_init=z)
+                    loss = self.criterion(logits.view(-1, self.config.model.vocab_size), labels.view(-1))
+                    batch_loss += loss.item()
+                    
+                total_loss += batch_loss / self.config.model.n_supervision_steps
+                
+        self.model.train()
+        return total_loss / len(self.val_loader)
+
+    def save_history(self, history):
+        import json
+        os.makedirs(self.config.train.output_dir, exist_ok=True)
+        path = os.path.join(self.config.train.output_dir, "history.json")
+        with open(path, "w") as f:
+            json.dump(history, f)
 
     def save_checkpoint(self, epoch, loss):
         os.makedirs(self.config.train.output_dir, exist_ok=True)
@@ -86,4 +146,3 @@ class Trainer:
             'loss': loss,
         }, path)
         print(f"Checkpoint saved to {path}")
-
