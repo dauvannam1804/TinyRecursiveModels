@@ -6,7 +6,15 @@ class ModelConfig:
     d_model: int = 256
     n_heads: int = 4
     n_layers: int = 4  # Layers in the tiny network (4x in diagram)
-    n_supervision_steps: int = 16 # N_sup in paper of recursive steps
+    # TRM Specifics
+    n_latent_steps: int = 6  # n in paper
+    n_recursion_steps: int = 3 # T in paper (not used in current diagram logic but good to keep?)
+    # Diagram logic uses n_latent_steps for z update loop.
+    # It doesn't explicitly show T loops of (z_loop -> y_update).
+    # But let's keep it if we want to support the full paper logic later, 
+    # or just n_latent_steps is enough for the current implementation.
+    # My current model implementation uses n_latent_steps.
+    n_supervision_steps: int = 16 # N_sup in paper
     vocab_size: int = 32000 # Will be updated after tokenizer training
     max_seq_len: int = 256
     dropout: float = 0.1
