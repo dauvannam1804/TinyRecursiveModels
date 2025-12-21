@@ -28,6 +28,8 @@ class Trainer:
         print(f"Starting training on {self.device}...")
         self.model.train()
         
+        history = {"train_loss": [], "val_loss": []}
+        
         for epoch in range(self.config.train.num_epochs):
             total_loss = 0
             progress_bar = tqdm(self.train_loader, desc=f"Epoch {epoch+1}/{self.config.train.num_epochs}")
@@ -39,42 +41,78 @@ class Trainer:
                 
                 self.optimizer.zero_grad()
                 
-                # Forward pass
-                # outputs shape: [n_recurrence, batch, seq_len, vocab_size]
-                outputs = self.model(input_ids, attention_mask)
+                # Initialize y and z
+                batch_size, seq_len = input_ids.size()
+                y = torch.zeros(batch_size, seq_len, self.config.model.d_model, device=self.device)
+                z = torch.zeros(batch_size, seq_len, self.config.model.d_model, device=self.device)
                 
-                # Deep Supervision Loss
-                loss = 0
-                n_steps = outputs.shape[0]
+                batch_loss = 0
                 
-                # We can weight the loss at each step differently if we want
-                # For now, uniform weighting or just sum
-                for step in range(n_steps):
-                    step_logits = outputs[step]
-                    # Flatten for CrossEntropyLoss
-                    step_loss = self.criterion(step_logits.view(-1, self.config.model.vocab_size), labels.view(-1))
-                    loss += step_loss
+                # Deep Supervision Loop
+                for step in range(self.config.model.n_supervision_steps):
+                    y, z, logits = self.model(input_ids, attention_mask, y_init=y, z_init=z)
+                    step_loss = self.criterion(logits.view(-1, self.config.model.vocab_size), labels.view(-1))
+                    
+                    weighted_loss = step_loss / self.config.model.n_supervision_steps
+                    weighted_loss.backward()
+                    
+                    batch_loss += weighted_loss.item()
+                    
+                    y = y.detach()
+                    z = z.detach()
                 
-                # Normalize loss by number of steps if needed, or keep as sum
-                loss = loss / n_steps
-                
-                loss.backward()
-                
-                # Gradient Clipping
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.train.grad_clip)
-                
                 self.optimizer.step()
                 
-                total_loss += loss.item()
-                progress_bar.set_postfix({"loss": loss.item()})
-                
-                # TODO: Add wandb logging here
+                total_loss += batch_loss
+                progress_bar.set_postfix({"loss": batch_loss})
                 
             avg_loss = total_loss / len(self.train_loader)
-            print(f"Epoch {epoch+1} completed. Avg Loss: {avg_loss:.4f}")
+            history["train_loss"].append(avg_loss)
+            print(f"Epoch {epoch+1} Train Loss: {avg_loss:.4f}")
+            
+            # Validation
+            if self.val_loader:
+                val_loss = self.evaluate()
+                history["val_loss"].append(val_loss)
+                print(f"Epoch {epoch+1} Val Loss: {val_loss:.4f}")
+            else:
+                history["val_loss"].append(None)
             
             if self.config.train.output_dir:
                 self.save_checkpoint(epoch, avg_loss)
+                self.save_history(history)
+
+    def evaluate(self):
+        self.model.eval()
+        total_loss = 0
+        with torch.no_grad():
+            for batch in tqdm(self.val_loader, desc="Validating"):
+                input_ids = batch["input_ids"].to(self.device)
+                attention_mask = batch["attention_mask"].to(self.device)
+                labels = batch["labels"].to(self.device)
+                
+                batch_size, seq_len = input_ids.size()
+                y = torch.zeros(batch_size, seq_len, self.config.model.d_model, device=self.device)
+                z = torch.zeros(batch_size, seq_len, self.config.model.d_model, device=self.device)
+                
+                batch_loss = 0
+                for step in range(self.config.model.n_supervision_steps):
+                    y, z, logits = self.model(input_ids, attention_mask, y_init=y, z_init=z)
+                    step_loss = self.criterion(logits.view(-1, self.config.model.vocab_size), labels.view(-1))
+                    batch_loss += (step_loss.item() / self.config.model.n_supervision_steps)
+                    
+                total_loss += batch_loss
+                
+        self.model.train()
+        return total_loss / len(self.val_loader)
+
+    def save_history(self, history):
+        import json
+        os.makedirs(self.config.train.output_dir, exist_ok=True)
+        path = os.path.join(self.config.train.output_dir, "history.json")
+        with open(path, "w") as f:
+            json.dump(history, f)
 
     def save_checkpoint(self, epoch, loss):
         os.makedirs(self.config.train.output_dir, exist_ok=True)

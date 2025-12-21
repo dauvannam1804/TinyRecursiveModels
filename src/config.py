@@ -31,5 +31,6 @@ class TrainConfig:
 class Config:
     model: ModelConfig = field(default_factory=ModelConfig)
     train: TrainConfig = field(default_factory=TrainConfig)
-    data_path: str = "data/processed/sample_1k.csv"
+    data_path: str = "data/processed/train_20k.csv"
+    val_data_path: str = "data/processed/val_5k.csv"
     tokenizer_path: str = "data/processed/tokenizer.json"
