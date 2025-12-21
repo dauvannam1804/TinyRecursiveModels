@@ -6,11 +6,11 @@ from src.config import Config
 def train_tokenizer(data_path: str, save_path: str, vocab_size: int = 32000):
     print(f"Loading data from {data_path}...")
     if data_path.endswith(".csv"):
-        import ast
+        import json
         df = pd.read_csv(data_path)
         # Parse conversations if needed
         if isinstance(df["conversations"].iloc[0], str):
-            df["conversations"] = df["conversations"].apply(ast.literal_eval)
+            df["conversations"] = df["conversations"].apply(json.loads)
     else:
         df = pd.read_parquet(data_path)
     

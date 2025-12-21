@@ -12,6 +12,13 @@ def create_sample_csv(input_path, output_path, n=1000):
     # Ensure output directory exists
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     
+    # Serialize conversations to JSON string to avoid parsing issues
+    import json
+    # Ensure we work on a copy to avoid SettingWithCopyWarning
+    sample_df = sample_df.copy()
+    # Convert numpy array/list to list then to json string
+    sample_df["conversations"] = sample_df["conversations"].apply(lambda x: json.dumps(x.tolist() if hasattr(x, "tolist") else x))
+    
     print(f"Saving to {output_path}...")
     sample_df.to_csv(output_path, index=False)
     print("Done.")

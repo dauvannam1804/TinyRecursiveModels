@@ -4,7 +4,7 @@ import pandas as pd
 from tokenizers import Tokenizer
 from typing import Dict
 import os
-import ast
+import json
 
 class MathDataset(Dataset):
     def __init__(self, data_path: str, tokenizer_path: str, max_seq_len: int = 512):
@@ -12,7 +12,10 @@ class MathDataset(Dataset):
             self.data = pd.read_csv(data_path)
             # Parse conversations column if it's a string representation of list
             if isinstance(self.data["conversations"].iloc[0], str):
-                self.data["conversations"] = self.data["conversations"].apply(ast.literal_eval)
+                import json
+            # Parse conversations column if it's a string representation of list
+            if isinstance(self.data["conversations"].iloc[0], str):
+                self.data["conversations"] = self.data["conversations"].apply(json.loads)
         else:
             self.data = pd.read_parquet(data_path)
             
