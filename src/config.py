@@ -8,12 +8,12 @@ class ModelConfig:
     n_layers: int = 2  # Layers per recursive block
     n_recurrence: int = 4  # Number of recursive steps
     vocab_size: int = 32000 # Will be updated after tokenizer training
-    max_seq_len: int = 512
+    max_seq_len: int = 256
     dropout: float = 0.1
 
 @dataclass
 class TrainConfig:
-    batch_size: int = 32
+    batch_size: int = 4
     learning_rate: float = 3e-4
     weight_decay: float = 0.01
     num_epochs: int = 10
