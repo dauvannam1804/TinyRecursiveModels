@@ -23,7 +23,6 @@ class Trainer:
         )
         
         self.criterion = nn.CrossEntropyLoss(ignore_index=-100)
-        self.bce_criterion = nn.BCELoss() # For Q-head
         
     def train(self):
         print(f"Starting training on {self.device}...")
@@ -50,29 +49,12 @@ class Trainer:
                 # Deep Supervision Loop
                 for step in range(self.config.model.n_supervision_steps):
                     # Forward pass
-                    (y, z), logits, q_hat = self.model(input_ids, attention_mask, y_init=y, z_init=z)
+                    y, z, logits = self.model(input_ids, attention_mask, y_init=y, z_init=z)
                     
-                    # Calculate Loss
-                    # 1. Classification Loss
+                    # Calculate Loss (Cross Entropy only)
                     loss = self.criterion(logits.view(-1, self.config.model.vocab_size), labels.view(-1))
                     
-                    # 2. ACT Loss (Q-head)
-                    # Target: 1 if prediction is correct, 0 otherwise
-                    # We need to compute y_hat == y_true
-                    with torch.no_grad():
-                        preds = torch.argmax(logits, dim=-1)
-                        # Mask out padding/ignore index
-                        valid_mask = labels != -100
-                        correct = (preds == labels) & valid_mask
-                        target_halt = correct.float()
-                    
-                    # Only compute BCE on valid tokens
-                    # q_hat is [batch, seq_len]
-                    if valid_mask.any():
-                        act_loss = self.bce_criterion(q_hat[valid_mask], target_halt[valid_mask])
-                        loss += act_loss
-                    
-                    # Backward & Step
+                    # Backward & Step (Step-wise Optimization)
                     loss.backward()
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.train.grad_clip)
                     self.optimizer.step()
@@ -80,11 +62,9 @@ class Trainer:
                     
                     batch_loss += loss.item()
                     
-                    # Early stopping based on Q-head (optional, as per pseudocode "if q_hat > 0: break")
-                    # Pseudocode says q_hat > 0, but q_hat is prob. Maybe logit > 0?
-                    # Or mean prob > threshold?
-                    # Let's skip early stopping for now to ensure full training or implement simple check.
-                    # if q_hat.mean() > 0.9: break 
+                    # Detach for next step
+                    y = y.detach()
+                    z = z.detach()
                 
                 total_loss += batch_loss / self.config.model.n_supervision_steps
                 progress_bar.set_postfix({"loss": batch_loss / self.config.model.n_supervision_steps})
@@ -120,7 +100,7 @@ class Trainer:
                 
                 batch_loss = 0
                 for step in range(self.config.model.n_supervision_steps):
-                    (y, z), logits, q_hat = self.model(input_ids, attention_mask, y_init=y, z_init=z)
+                    y, z, logits = self.model(input_ids, attention_mask, y_init=y, z_init=z)
                     loss = self.criterion(logits.view(-1, self.config.model.vocab_size), labels.view(-1))
                     batch_loss += loss.item()
                     

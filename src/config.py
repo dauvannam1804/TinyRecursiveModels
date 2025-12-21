@@ -1,12 +1,12 @@
+```python
 from dataclasses import dataclass, field
 from typing import Optional
 
 @dataclass
 class ModelConfig:
     d_model: int = 256
-    # TRM Specifics
-    n_latent_steps: int = 6  # n in paper
-    n_recursion_steps: int = 3 # T in paper
+    n_heads: int = 4
+    n_layers: int = 4  # Layers in the tiny network (4x in diagram)
     n_supervision_steps: int = 16 # N_sup in paper of recursive steps
     vocab_size: int = 32000 # Will be updated after tokenizer training
     max_seq_len: int = 256
