@@ -27,13 +27,22 @@ def train_tokenizer(data_path: str, save_path: str, vocab_size: int = 32000):
                         texts.append(turn["value"])
             yield texts
 
-    print("Initializing tokenizer (BPE)...")
-    tokenizer = Tokenizer(models.BPE())
-    tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
+    print("Initializing tokenizer (Unigram)...")
+    tokenizer = Tokenizer(models.Unigram())
     
-    trainer = trainers.BpeTrainer(
+    # Normalization (NFKC is standard for SentencePiece)
+    from tokenizers import normalizers
+    tokenizer.normalizer = normalizers.Sequence([
+        normalizers.NFKC()
+    ])
+    
+    # Pre-tokenization (Metaspace is standard for SentencePiece)
+    tokenizer.pre_tokenizer = pre_tokenizers.Metaspace()
+    
+    trainer = trainers.UnigramTrainer(
         vocab_size=vocab_size, 
-        special_tokens=["<PAD>", "<UNK>", "<BOS>", "<EOS>"],
+        special_tokens=["<unk>", "<s>", "</s>", "<pad>", "<mask>"],
+        unk_token="<unk>",
         show_progress=True
     )
 
@@ -41,8 +50,9 @@ def train_tokenizer(data_path: str, save_path: str, vocab_size: int = 32000):
     tokenizer.train_from_iterator(batch_iterator(), trainer=trainer)
 
     # Post-processing
-    tokenizer.post_processor = processors.ByteLevel(trim_offsets=False)
-    tokenizer.decoder = decoders.ByteLevel()
+    # Unigram with Metaspace usually doesn't need ByteLevel post-processor
+    # But we need a decoder
+    tokenizer.decoder = decoders.Metaspace()
     
     # Save
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
