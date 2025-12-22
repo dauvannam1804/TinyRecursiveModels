@@ -71,6 +71,65 @@ class InferenceEngine:
         decoded = self.tokenizer.decode(output_ids)
         return decoded
 
+    def evaluate_dataset(self, csv_path: str, n_samples: int = None) -> float:
+        import pandas as pd
+        import json
+        from tqdm import tqdm
+        
+        if not os.path.exists(csv_path):
+            print(f"Dataset not found at {csv_path}")
+            return 0.0
+            
+        df = pd.read_csv(csv_path)
+        if n_samples:
+            df = df.head(n_samples)
+            
+        correct = 0
+        total = 0
+        
+        print(f"Evaluating on {len(df)} samples...")
+        for _, row in tqdm(df.iterrows(), total=len(df)):
+            conversations = json.loads(row["conversations"])
+            problem = ""
+            solution = ""
+            for turn in conversations:
+                if turn["from"] == "human":
+                    problem = turn["value"]
+                elif turn["from"] == "gpt":
+                    solution = turn["value"]
+            
+            prompt = f"Problem: {problem}\nSolution:"
+            
+            # Generate
+            # We want to stop at EOS or newline to avoid generating extra text
+            # But for now, let's just generate and strip
+            prediction = self.generate(prompt, max_new_tokens=50)
+            
+            # Post-processing for comparison
+            # Prediction might contain the prompt if not handled carefully, 
+            # but our generate appends to input_ids. 
+            # Wait, self.generate returns decoded text. 
+            # Does it return the FULL text or just the new tokens?
+            # Looking at generate: 
+            # output_ids = input_ids[0].tolist() -> input_ids includes prompt.
+            # So decoded includes prompt.
+            # We need to strip the prompt from prediction.
+            
+            if prediction.startswith(prompt):
+                prediction = prediction[len(prompt):].strip()
+            
+            # Also strip solution just in case
+            solution = solution.strip()
+            
+            # Simple Exact Match
+            if prediction == solution:
+                correct += 1
+            total += 1
+            
+        accuracy = correct / total if total > 0 else 0
+        print(f"Accuracy: {accuracy:.2%} ({correct}/{total})")
+        return accuracy
+
 if __name__ == "__main__":
     # Example usage
     # Assuming a checkpoint exists at checkpoints/checkpoint_epoch_0.pt (or similar)
