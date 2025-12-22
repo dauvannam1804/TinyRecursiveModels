@@ -5,7 +5,7 @@ from typing import Optional
 class ModelConfig:
     d_model: int = 256
     n_heads: int = 4
-    n_layers: int = 4  # Layers in the tiny network (4x in diagram)
+    n_layers: int = 2  # Layers in the tiny network (4x in diagram)
     # TRM Specifics
     n_latent_steps: int = 6  # n in paper (z update loop)
     n_recursion_steps: int = 3 # T in paper (Deep Recursion loop)
