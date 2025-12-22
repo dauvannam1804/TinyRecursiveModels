@@ -23,9 +23,10 @@ class MathDataset(Dataset):
         self.max_seq_len = max_seq_len
         
         # Special token IDs
-        self.pad_token_id = self.tokenizer.token_to_id("<PAD>")
-        self.bos_token_id = self.tokenizer.token_to_id("<BOS>")
-        self.eos_token_id = self.tokenizer.token_to_id("<EOS>")
+        # Special token IDs (Unigram/SentencePiece standard)
+        self.pad_token_id = self.tokenizer.token_to_id("<pad>")
+        self.bos_token_id = self.tokenizer.token_to_id("<s>")
+        self.eos_token_id = self.tokenizer.token_to_id("</s>")
 
     def __len__(self):
         return len(self.data)
