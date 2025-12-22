@@ -68,9 +68,9 @@ class TinyRecursiveModel(nn.Module):
         self.ln_f = nn.LayerNorm(config.d_model)
         self.head = nn.Linear(config.d_model, config.vocab_size, bias=False)
 
-    def forward_step(self, x: torch.Tensor, y: torch.Tensor, z: torch.Tensor, mask: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+    def latent_recursion(self, x: torch.Tensor, y: torch.Tensor, z: torch.Tensor, mask: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Diagram Logic:
+        Diagram Logic (matches 'latent_recursion' in pseudocode):
         1. Update z (n times): Input = x + y + z. Output -> new z.
         2. Update y (1 time): Input = y + z. Output -> new y.
         """
@@ -116,10 +116,10 @@ class TinyRecursiveModel(nn.Module):
         # T-1 times without gradient
         with torch.no_grad():
             for _ in range(self.config.n_recursion_steps - 1):
-                y, z = self.forward_step(x, y, z, mask=causal_mask)
+                y, z = self.latent_recursion(x, y, z, mask=causal_mask)
         
         # Last step WITH gradient
-        y, z = self.forward_step(x, y, z, mask=causal_mask)
+        y, z = self.latent_recursion(x, y, z, mask=causal_mask)
         
         # Logits (Reverse Embedding)
         logits = self.head(self.ln_f(y))
