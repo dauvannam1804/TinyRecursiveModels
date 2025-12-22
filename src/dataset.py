@@ -6,51 +6,68 @@ from typing import Dict
 import os
 import json
 
-class MathDataset(Dataset):
+class ToolCallDataset(Dataset):
     def __init__(self, data_path: str, tokenizer_path: str, max_seq_len: int = 512):
-        if data_path.endswith(".csv"):
-            self.data = pd.read_csv(data_path)
-            # Parse conversations column if it's a string representation of list
-            if isinstance(self.data["conversations"].iloc[0], str):
-                import json
-            # Parse conversations column if it's a string representation of list
-            if isinstance(self.data["conversations"].iloc[0], str):
-                self.data["conversations"] = self.data["conversations"].apply(json.loads)
-        else:
-            self.data = pd.read_parquet(data_path)
+        self.data_path = data_path
+        # Only support JSON format (XLAM/Swift)
+        with open(data_path, 'r') as f:
+            self.data = json.load(f)
             
         self.tokenizer = Tokenizer.from_file(tokenizer_path)
         self.max_seq_len = max_seq_len
         
         # Special token IDs
-        # Special token IDs (Unigram/SentencePiece standard)
         self.pad_token_id = self.tokenizer.token_to_id("<pad>")
         self.bos_token_id = self.tokenizer.token_to_id("<s>")
         self.eos_token_id = self.tokenizer.token_to_id("</s>")
+        # ChatML tokens
+        self.im_start_id = self.tokenizer.token_to_id("<|im_start|>")
+        self.im_end_id = self.tokenizer.token_to_id("<|im_end|>")
+        
+        # Fallback if ChatML tokens are not in tokenizer
+        if self.im_start_id is None:
+            self.im_start_id = self.bos_token_id
+        if self.im_end_id is None:
+            self.im_end_id = self.eos_token_id
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx) -> Dict[str, torch.Tensor]:
-        row = self.data.iloc[idx]
-        conversations = row["conversations"]
+        item = self.data[idx]
+        tools_str = item['tools'] # JSON string
+        messages = item['messages']
         
-        # Extract problem (human) and solution (gpt)
-        problem = ""
-        solution = ""
+        # Construct ChatML text with Hermes template
+        # 1. System Prompt
+        text = "<|im_start|>system\n"
+        text += "You are a helpful assistant.\n"
+        text += "# Tools\n"
+        text += "You may call one or more functions to assist with the user query.\n"
+        text += "You are provided with function signatures within <tools></tools> XML tags:\n"
+        text += f"<tools>\n{tools_str}\n</tools>\n"
+        text += "For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n"
+        text += "<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call><|im_end|>\n"
         
-        for turn in conversations:
-            if turn["from"] == "human":
-                problem = turn["value"]
-            elif turn["from"] == "gpt":
-                solution = turn["value"]
-        
-        # Format: <BOS> Problem: ... \n Solution: ... <EOS>
-        text = f"Problem: {problem}\nSolution: {solution}"
-        
+        # 2. Messages
+        for msg in messages:
+            role = msg['role']
+            content = msg['content']
+            
+            if role == 'tool_call':
+                # Map tool_call role to assistant role with <tool_call> tags
+                role = 'assistant'
+                content = f"<tool_call>\n{content}\n</tool_call>"
+            
+            text += f"<|im_start|>{role}\n{content}<|im_end|>\n"
+            
         encoded = self.tokenizer.encode(text)
+        # We don't need BOS/EOS if we use ChatML tags, but let's keep BOS at start for consistency with model expectation if any
         ids = [self.bos_token_id] + encoded.ids + [self.eos_token_id]
         
+        return self._process_ids(ids)
+
+    def _process_ids(self, ids):
         # Truncate if needed
         if len(ids) > self.max_seq_len:
             ids = ids[:self.max_seq_len]

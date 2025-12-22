@@ -1,7 +1,7 @@
 import torch
 from torch.utils.data import DataLoader
 from src.config import Config
-from src.dataset import MathDataset
+from src.dataset import ToolCallDataset
 from src.model import TinyRecursiveModel
 from src.trainer import Trainer
 import os
@@ -20,7 +20,7 @@ def main():
     if not os.path.exists(config.tokenizer_path):
         raise FileNotFoundError(f"Tokenizer not found at {config.tokenizer_path}. Please run 'scripts/train_tokenizer.sh' first.")
         
-    train_dataset = MathDataset(config.data_path, config.tokenizer_path, config.model.max_seq_len)
+    train_dataset = ToolCallDataset(config.data_path, config.tokenizer_path, config.model.max_seq_len)
     train_loader = DataLoader(train_dataset, batch_size=config.train.batch_size, shuffle=True)
     
     print(f"Train Dataset loaded. Size: {len(train_dataset)}")
@@ -29,7 +29,7 @@ def main():
     val_loader = None
     if config.val_data_path and os.path.exists(config.val_data_path):
         print(f"Loading validation data from {config.val_data_path}...")
-        val_dataset = MathDataset(config.val_data_path, config.tokenizer_path, config.model.max_seq_len)
+        val_dataset = ToolCallDataset(config.val_data_path, config.tokenizer_path, config.model.max_seq_len)
         val_loader = DataLoader(val_dataset, batch_size=config.train.batch_size, shuffle=False)
         print(f"Val Dataset loaded. Size: {len(val_dataset)}")
     

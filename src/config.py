@@ -34,6 +34,6 @@ class TrainConfig:
 class Config:
     model: ModelConfig = field(default_factory=ModelConfig)
     train: TrainConfig = field(default_factory=TrainConfig)
-    data_path: str = "data/processed/train_20k.csv"
-    val_data_path: str = "data/processed/val_5k.csv"
+    data_path: str = "data/processed/xlam_1k_swift.json"
+    val_data_path: str = "data/processed/xlam_val_200_swift.json"
     tokenizer_path: str = "data/processed/tokenizer.json"
