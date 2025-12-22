@@ -40,10 +40,8 @@ class Trainer:
                 attention_mask = batch["attention_mask"].to(self.device)
                 labels = batch["labels"].to(self.device)
                 
-                # Initialize y and z
-                batch_size, seq_len = input_ids.size()
-                y = torch.zeros(batch_size, seq_len, self.config.model.d_model, device=self.device)
-                z = torch.zeros(batch_size, seq_len, self.config.model.d_model, device=self.device)
+                # Initialize y and z (Let model handle it with learnable params)
+                y, z = None, None
                 
                 batch_loss = 0
                 

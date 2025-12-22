@@ -70,6 +70,13 @@ class TinyRecursiveModel(nn.Module):
         
         # Q-head for Adaptive Computation Time (ACT)
         self.q_head = nn.Linear(config.d_model, 1)
+        
+        # Learnable Initialization for y and z
+        self.y_init_param = nn.Parameter(torch.zeros(1, 1, config.d_model))
+        self.z_init_param = nn.Parameter(torch.zeros(1, 1, config.d_model))
+        # Optional: Initialize with small random values instead of pure zeros?
+        # nn.init.normal_(self.y_init_param, std=0.02)
+        # nn.init.normal_(self.z_init_param, std=0.02)
 
     def latent_recursion(self, x: torch.Tensor, y: torch.Tensor, z: torch.Tensor, mask: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -109,9 +116,10 @@ class TinyRecursiveModel(nn.Module):
         
         # Initialize y and z if not provided
         if y_init is None:
-            y_init = torch.zeros_like(x)
+            # Broadcast learnable parameter to [batch, seq_len, d_model]
+            y_init = self.y_init_param.expand(batch_size, seq_len, -1)
         if z_init is None:
-            z_init = torch.zeros_like(x)
+            z_init = self.z_init_param.expand(batch_size, seq_len, -1)
             
         y, z = y_init, z_init
         
