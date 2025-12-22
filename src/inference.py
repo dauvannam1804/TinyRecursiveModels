@@ -33,9 +33,18 @@ class InferenceEngine:
 
     def generate(self, prompt: str, max_new_tokens: int = 50, temperature: float = 1.0) -> str:
         # Encode
+        # Encode
         encoded = self.tokenizer.encode(prompt)
-        input_ids = [self.bos_token_id] + encoded.ids
-        input_ids = torch.tensor([input_ids], dtype=torch.long, device=self.device)
+        ids = [self.bos_token_id] + encoded.ids
+        
+        # Truncate to ensure we have space for generation
+        # We need to ensure len(ids) + max_new_tokens <= self.config.model.max_seq_len
+        max_input_len = self.config.model.max_seq_len - max_new_tokens
+        if len(ids) > max_input_len:
+            print(f"Warning: Prompt too long ({len(ids)} tokens). Truncating to {max_input_len} tokens to fit max_seq_len ({self.config.model.max_seq_len}).")
+            ids = ids[:max_input_len]
+            
+        input_ids = torch.tensor([ids], dtype=torch.long, device=self.device)
         
         # Generation Loop
         for _ in range(max_new_tokens):
