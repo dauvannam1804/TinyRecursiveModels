@@ -71,60 +71,99 @@ class InferenceEngine:
         decoded = self.tokenizer.decode(output_ids)
         return decoded
 
-    def evaluate_dataset(self, csv_path: str, n_samples: int = None) -> float:
-        import pandas as pd
+    def generate_tool_call(self, tools: str, query: str, max_new_tokens: int = 200) -> str:
+        # Construct ChatML text with Hermes template
+        # 1. System Prompt
+        text = "<|im_start|>system\n"
+        text += "You are a helpful assistant.\n"
+        text += "# Tools\n"
+        text += "You may call one or more functions to assist with the user query.\n"
+        text += "You are provided with function signatures within <tools></tools> XML tags:\n"
+        text += f"<tools>\n{tools}\n</tools>\n"
+        text += "For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n"
+        text += "<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call><|im_end|>\n"
+        
+        # 2. User Query
+        text += f"<|im_start|>user\n{query}<|im_end|>\n"
+        
+        # 3. Assistant Start
+        text += "<|im_start|>assistant\n"
+        
+        # Generate
+        return self.generate(text, max_new_tokens=max_new_tokens)
+
+    def evaluate_dataset(self, data_path: str, n_samples: int = None) -> float:
         import json
         from tqdm import tqdm
         
-        if not os.path.exists(csv_path):
-            print(f"Dataset not found at {csv_path}")
+        if not os.path.exists(data_path):
+            print(f"Dataset not found at {data_path}")
             return 0.0
             
-        df = pd.read_csv(csv_path)
+        # Load data (JSON only)
+        if data_path.endswith(".json"):
+            with open(data_path, 'r') as f:
+                data = json.load(f)
+        else:
+            print("Unsupported file format. Only .json is supported.")
+            return 0.0
+            
         if n_samples:
-            df = df.head(n_samples)
+            data = data[:n_samples]
             
         correct = 0
         total = 0
         
-        print(f"Evaluating on {len(df)} samples...")
-        for _, row in tqdm(df.iterrows(), total=len(df)):
-            conversations = json.loads(row["conversations"])
-            problem = ""
-            solution = ""
-            for turn in conversations:
-                if turn["from"] == "human":
-                    problem = turn["value"]
-                elif turn["from"] == "gpt":
-                    solution = turn["value"]
-            
-            prompt = f"Problem: {problem}\nSolution:"
-            
-            # Generate
-            # We want to stop at EOS or newline to avoid generating extra text
-            # But for now, let's just generate and strip
-            prediction = self.generate(prompt, max_new_tokens=50)
-            
-            # Post-processing for comparison
-            # Prediction might contain the prompt if not handled carefully, 
-            # but our generate appends to input_ids. 
-            # Wait, self.generate returns decoded text. 
-            # Does it return the FULL text or just the new tokens?
-            # Looking at generate: 
-            # output_ids = input_ids[0].tolist() -> input_ids includes prompt.
-            # So decoded includes prompt.
-            # We need to strip the prompt from prediction.
-            
-            if prediction.startswith(prompt):
-                prediction = prediction[len(prompt):].strip()
-            
-            # Also strip solution just in case
-            solution = solution.strip()
-            
-            # Simple Exact Match
-            if prediction == solution:
-                correct += 1
-            total += 1
+        print(f"Evaluating on {len(data)} samples...")
+        for item in tqdm(data):
+            # XLAM / Swift Format
+            if "tools" in item and "messages" in item:
+                tools = item["tools"]
+                query = ""
+                solution = ""
+                
+                for msg in item["messages"]:
+                    if msg["role"] == "user":
+                        query = msg["content"]
+                    elif msg["role"] == "tool_call":
+                        solution = f"<tool_call>\n{msg['content']}\n</tool_call>"
+                
+                if not query or not solution:
+                    continue
+                    
+                # Generate
+                prediction = self.generate_tool_call(tools, query)
+                
+                # Re-construct prompt to strip it
+                prompt_text = "<|im_start|>system\n"
+                prompt_text += "You are a helpful assistant.\n"
+                prompt_text += "# Tools\n"
+                prompt_text += "You may call one or more functions to assist with the user query.\n"
+                prompt_text += "You are provided with function signatures within <tools></tools> XML tags:\n"
+                prompt_text += f"<tools>\n{tools}\n</tools>\n"
+                prompt_text += "For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n"
+                prompt_text += "<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call><|im_end|>\n"
+                prompt_text += f"<|im_start|>user\n{query}<|im_end|>\n"
+                prompt_text += "<|im_start|>assistant\n"
+                
+                if prediction.startswith(prompt_text):
+                    prediction = prediction[len(prompt_text):].strip()
+                else:
+                    # Fallback: try to find the last <|im_start|>assistant\n
+                    idx = prediction.rfind("<|im_start|>assistant\n")
+                    if idx != -1:
+                        prediction = prediction[idx + len("<|im_start|>assistant\n"):].strip()
+                
+                # Normalize for comparison (simple strip)
+                solution = solution.strip()
+                prediction = prediction.strip()
+                
+                # Remove <|im_end|> if present in prediction
+                prediction = prediction.replace("<|im_end|>", "").strip()
+                
+                if prediction == solution:
+                    correct += 1
+                total += 1
             
         accuracy = correct / total if total > 0 else 0
         print(f"Accuracy: {accuracy:.2%} ({correct}/{total})")
