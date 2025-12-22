@@ -11,7 +11,7 @@ class ModelConfig:
     n_recursion_steps: int = 3 # T in paper (Deep Recursion loop)
     n_supervision_steps: int = 16 # N_sup in paper
     vocab_size: int = 32000 # Will be updated after tokenizer training
-    max_seq_len: int = 256
+    max_seq_len: int = 512
     dropout: float = 0.1
 
 @dataclass

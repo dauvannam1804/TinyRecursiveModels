@@ -38,16 +38,22 @@ class ToolCallDataset(Dataset):
         tools_str = item['tools'] # JSON string
         messages = item['messages']
         
-        # Construct ChatML text with Hermes template
+        all_input_ids = []
+        all_labels = []
+        
         # 1. System Prompt
-        text = "<|im_start|>system\n"
-        text += "You are a helpful assistant.\n"
-        text += "# Tools\n"
-        text += "You may call one or more functions to assist with the user query.\n"
-        text += "You are provided with function signatures within <tools></tools> XML tags:\n"
-        text += f"<tools>\n{tools_str}\n</tools>\n"
-        text += "For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n"
-        text += "<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call><|im_end|>\n"
+        system_text = "<|im_start|>system\n"
+        system_text += "You are a helpful assistant.\n"
+        system_text += "# Tools\n"
+        system_text += "You may call one or more functions to assist with the user query.\n"
+        system_text += "You are provided with function signatures within <tools></tools> XML tags:\n"
+        system_text += f"<tools>\n{tools_str}\n</tools>\n"
+        system_text += "For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n"
+        system_text += "<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call><|im_end|>\n"
+        
+        system_ids = self.tokenizer.encode(system_text).ids
+        all_input_ids.extend(system_ids)
+        all_labels.extend([-100] * len(system_ids))
         
         # 2. Messages
         for msg in messages:
@@ -56,33 +62,51 @@ class ToolCallDataset(Dataset):
             
             if role == 'tool_call':
                 # Map tool_call role to assistant role with <tool_call> tags
-                role = 'assistant'
-                content = f"<tool_call>\n{content}\n</tool_call>"
+                # Split into header and content for masking
+                
+                # Header: <|im_start|>assistant\n
+                header_text = "<|im_start|>assistant\n"
+                header_ids = self.tokenizer.encode(header_text).ids
+                all_input_ids.extend(header_ids)
+                all_labels.extend([-100] * len(header_ids))
+                
+                # Content: <tool_call>...<|im_end|>\n
+                content_text = f"<tool_call>\n{content}\n</tool_call><|im_end|>\n"
+                content_ids = self.tokenizer.encode(content_text).ids
+                all_input_ids.extend(content_ids)
+                all_labels.extend(content_ids) # Train on this
+                
+            else:
+                # User or other roles: Mask everything
+                text = f"<|im_start|>{role}\n{content}<|im_end|>\n"
+                ids = self.tokenizer.encode(text).ids
+                all_input_ids.extend(ids)
+                all_labels.extend([-100] * len(ids))
             
-            text += f"<|im_start|>{role}\n{content}<|im_end|>\n"
-            
-        encoded = self.tokenizer.encode(text)
-        # We don't need BOS/EOS if we use ChatML tags, but let's keep BOS at start for consistency with model expectation if any
-        ids = [self.bos_token_id] + encoded.ids + [self.eos_token_id]
+        # Add BOS at start and EOS at end
+        # BOS
+        all_input_ids = [self.bos_token_id] + all_input_ids
+        all_labels = [-100] + all_labels
         
-        return self._process_ids(ids)
+        # EOS
+        all_input_ids = all_input_ids + [self.eos_token_id]
+        all_labels = all_labels + [self.eos_token_id] # Train on EOS
+        
+        return self._process_ids(all_input_ids, all_labels)
 
-    def _process_ids(self, ids):
+    def _process_ids(self, ids, labels):
         # Truncate if needed
         if len(ids) > self.max_seq_len:
             ids = ids[:self.max_seq_len]
+            labels = labels[:self.max_seq_len]
             
         # Padding
         padding_len = self.max_seq_len - len(ids)
         attention_mask = [1] * len(ids) + [0] * padding_len
-        ids = ids + [self.pad_token_id] * padding_len
         
-        # Labels
-        labels = ids.copy()
-        for i in range(len(labels)):
-            if attention_mask[i] == 0:
-                labels[i] = -100
-                
+        ids = ids + [self.pad_token_id] * padding_len
+        labels = labels + [-100] * padding_len # Pad with -100
+        
         return {
             "input_ids": torch.tensor(ids, dtype=torch.long),
             "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
