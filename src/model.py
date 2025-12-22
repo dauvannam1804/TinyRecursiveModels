@@ -112,7 +112,13 @@ class TinyRecursiveModel(nn.Module):
             
         y, z = y_init, z_init
         
-        # Update step
+        # Deep Recursion Loop (T times)
+        # T-1 times without gradient
+        with torch.no_grad():
+            for _ in range(self.config.n_recursion_steps - 1):
+                y, z = self.forward_step(x, y, z, mask=causal_mask)
+        
+        # Last step WITH gradient
         y, z = self.forward_step(x, y, z, mask=causal_mask)
         
         # Logits (Reverse Embedding)
