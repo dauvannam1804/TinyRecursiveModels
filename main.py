@@ -23,14 +23,22 @@ def main():
     train_dataset = MathDataset(config.data_path, config.tokenizer_path, config.model.max_seq_len)
     train_loader = DataLoader(train_dataset, batch_size=config.train.batch_size, shuffle=True)
     
-    print(f"Dataset loaded. Size: {len(train_dataset)}")
+    print(f"Train Dataset loaded. Size: {len(train_dataset)}")
+    
+    # Validation Dataset
+    val_loader = None
+    if config.val_data_path and os.path.exists(config.val_data_path):
+        print(f"Loading validation data from {config.val_data_path}...")
+        val_dataset = MathDataset(config.val_data_path, config.tokenizer_path, config.model.max_seq_len)
+        val_loader = DataLoader(val_dataset, batch_size=config.train.batch_size, shuffle=False)
+        print(f"Val Dataset loaded. Size: {len(val_dataset)}")
     
     # Model
     model = TinyRecursiveModel(config.model)
     print("Model initialized.")
     
     # Trainer
-    trainer = Trainer(model, train_loader, config)
+    trainer = Trainer(model, train_loader, config, val_loader=val_loader)
     
     # Train
     trainer.train()

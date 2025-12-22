@@ -107,8 +107,7 @@ class Trainer:
                 labels = batch["labels"].to(self.device)
                 
                 batch_size, seq_len = input_ids.size()
-                y = torch.zeros(batch_size, seq_len, self.config.model.d_model, device=self.device)
-                z = torch.zeros(batch_size, seq_len, self.config.model.d_model, device=self.device)
+                y, z = None, None # Use learnable init
                 
                 batch_loss = 0
                 for step in range(self.config.model.n_supervision_steps):
