@@ -67,6 +67,9 @@ class TinyRecursiveModel(nn.Module):
         
         self.ln_f = nn.LayerNorm(config.d_model)
         self.head = nn.Linear(config.d_model, config.vocab_size, bias=False)
+        
+        # Q-head for Adaptive Computation Time (ACT)
+        self.q_head = nn.Linear(config.d_model, 1)
 
     def latent_recursion(self, x: torch.Tensor, y: torch.Tensor, z: torch.Tensor, mask: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -88,10 +91,10 @@ class TinyRecursiveModel(nn.Module):
         return y, z
 
     def forward(self, input_ids: torch.Tensor, attention_mask: Optional[torch.Tensor] = None, 
-                y_init: Optional[torch.Tensor] = None, z_init: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+                y_init: Optional[torch.Tensor] = None, z_init: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Forward pass for ONE supervision step.
-        Returns: y_next, z_next, logits
+        Returns: y_next, z_next, logits, q_hat
         """
         batch_size, seq_len = input_ids.size()
         device = input_ids.device
@@ -124,7 +127,10 @@ class TinyRecursiveModel(nn.Module):
         # Logits (Reverse Embedding)
         logits = self.head(self.ln_f(y))
         
-        return y, z, logits
+        # Q-head (Halting Probability)
+        q_hat = torch.sigmoid(self.q_head(y)).squeeze(-1) # [batch, seq_len]
+        
+        return y, z, logits, q_hat
 
 if __name__ == "__main__":
     cfg = ModelConfig()
@@ -132,7 +138,9 @@ if __name__ == "__main__":
     print("Model created.")
     
     dummy_input = torch.randint(0, cfg.vocab_size, (2, 10))
-    y, z, logits = model(dummy_input)
+    y, z, logits, q_hat = model(dummy_input)
     print("Logits shape:", logits.shape)
+    print("Q_hat shape:", q_hat.shape)
     assert logits.shape == (2, 10, cfg.vocab_size)
+    assert q_hat.shape == (2, 10)
     print("Test passed.")

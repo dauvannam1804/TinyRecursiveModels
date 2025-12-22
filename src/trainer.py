@@ -23,6 +23,7 @@ class Trainer:
         )
         
         self.criterion = nn.CrossEntropyLoss(ignore_index=-100)
+        self.bce_criterion = nn.BCELoss() # For Q-head
         
     def train(self):
         print(f"Starting training on {self.device}...")
@@ -49,10 +50,23 @@ class Trainer:
                 # Deep Supervision Loop
                 for step in range(self.config.model.n_supervision_steps):
                     # Forward pass
-                    y, z, logits = self.model(input_ids, attention_mask, y_init=y, z_init=z)
+                    y, z, logits, q_hat = self.model(input_ids, attention_mask, y_init=y, z_init=z)
                     
-                    # Calculate Loss (Cross Entropy only)
+                    # Calculate Loss (Cross Entropy)
                     loss = self.criterion(logits.view(-1, self.config.model.vocab_size), labels.view(-1))
+                    
+                    # ACT Loss (Q-head)
+                    # Target: 1 if prediction is correct, 0 otherwise
+                    with torch.no_grad():
+                        preds = torch.argmax(logits, dim=-1)
+                        valid_mask = labels != -100
+                        correct = (preds == labels) & valid_mask
+                        target_halt = correct.float()
+                    
+                    if valid_mask.any():
+                        # q_hat is [batch, seq_len]
+                        act_loss = self.bce_criterion(q_hat[valid_mask], target_halt[valid_mask])
+                        loss += act_loss
                     
                     # Backward & Step (Step-wise Optimization)
                     loss.backward()
@@ -100,7 +114,7 @@ class Trainer:
                 
                 batch_loss = 0
                 for step in range(self.config.model.n_supervision_steps):
-                    y, z, logits = self.model(input_ids, attention_mask, y_init=y, z_init=z)
+                    y, z, logits, q_hat = self.model(input_ids, attention_mask, y_init=y, z_init=z)
                     loss = self.criterion(logits.view(-1, self.config.model.vocab_size), labels.view(-1))
                     batch_loss += loss.item()
                     
