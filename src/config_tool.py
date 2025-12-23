@@ -36,7 +36,7 @@ class ModelConfig:
     
     # Vocabulary
     vocab_size: int = 32000
-    max_seq_len: int = 1024  # Longer for tool calling
+    max_seq_len: int = 512  # Longer for tool calling
     
     # Regularization
     dropout: float = 0.1
@@ -62,8 +62,8 @@ class TrainConfig:
     weight_decay: float = 1.0  # Heavy weight decay (from paper)
     
     # Schedule
-    num_epochs: int = 60  # Long training (paper uses 60k epochs on small data)
-    warmup_steps: int = 2000
+    num_epochs: int = 1  # Set to 1 for quick test, increase for full training
+    warmup_steps: int = 100  # Reduced for quick test
     
     # Gradient
     grad_clip: float = 1.0
@@ -83,8 +83,8 @@ class TrainConfig:
     
     # Logging & Saving
     log_interval: int = 10
-    eval_interval: int = 500
-    save_interval: int = 1000
+    eval_interval: int = 200  # More frequent eval for quick test
+    save_interval: int = 500  # More frequent save for quick test
     output_dir: str = "checkpoints"
     
     # Tracking
@@ -189,7 +189,8 @@ class Config:
                 learning_rate=1e-4,
                 embedding_lr=1e-2,
                 weight_decay=1.0,
-                num_epochs=60,
+                num_epochs=1,  # Quick test
+                warmup_steps=100,
                 use_ema=True,
                 use_act=True,
             ),
