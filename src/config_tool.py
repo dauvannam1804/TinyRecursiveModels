@@ -99,8 +99,8 @@ class TrainConfig:
 class DataConfig:
     """Data configuration"""
     # Paths
-    train_path: str = "data/processed/hermes_train_10000.json"
-    val_path: str = "data/processed/hermes_val_1000.json"
+    train_path: str = "data/processed/hermes_train_1000.json"
+    val_path: str = "data/processed/hermes_val_200.json"
     tokenizer_path: str = "data/processed/tokenizer.json"
     
     # Data format
