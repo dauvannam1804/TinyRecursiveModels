@@ -21,13 +21,13 @@ pip install -r requirements.txt
    This will train a BPE tokenizer on the sample dataset.
 ```bash
 # Train Unigram Tokenizer (Default)
-python src/tokenizer.py --type unigram
+./scripts/train_tokenizer.sh --type unigram
 
 # Train BPE Tokenizer
-python src/tokenizer.py --type bpe
+./scripts/train_tokenizer.sh --type bpe
 
 # Train WordLevel Tokenizer
-python src/tokenizer.py --type wordlevel
+./scripts/train_tokenizer.sh --type wordlevel
 ```
 
 2. **Train Model**:

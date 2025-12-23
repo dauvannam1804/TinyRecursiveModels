@@ -222,13 +222,14 @@ def train_wordlevel_tokenizer(data_path: str, save_path: str, vocab_size: int = 
 
 if __name__ == "__main__":
     import argparse
+
+    config = Config()
     
     parser = argparse.ArgumentParser(description="Train a tokenizer (Unigram, BPE, or WordLevel)")
     parser.add_argument("--type", type=str, default="unigram", choices=["unigram", "bpe", "wordlevel"], help="Type of tokenizer to train")
-    parser.add_argument("--vocab_size", type=int, default=8000, help="Vocabulary size")
+    parser.add_argument("--vocab_size", type=int, default=config.model.vocab_size, help="Vocabulary size")
     args = parser.parse_args()
 
-    config = Config()
     # Ensure data path is correct relative to where we run
     if not os.path.exists(config.data_path):
         # Fallback if running from root and config has relative path
