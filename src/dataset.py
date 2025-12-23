@@ -42,14 +42,14 @@ class ToolCallDataset(Dataset):
         all_labels = []
         
         # 1. System Prompt
-        system_text = "<|im_start|>system\n"
-        system_text += "You are a helpful assistant.\n"
-        system_text += "# Tools\n"
-        system_text += "You may call one or more functions to assist with the user query.\n"
-        system_text += "You are provided with function signatures within <tools></tools> XML tags:\n"
-        system_text += f"<tools>\n{tools_str}\n</tools>\n"
-        system_text += "For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n"
-        system_text += "<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call><|im_end|>\n"
+        system_text = "<|im_start|>system "
+        system_text += "You are a helpful assistant. "
+        system_text += "# Tools "
+        system_text += "You may call one or more functions to assist with the user query. "
+        system_text += "You are provided with function signatures within <tools></tools> XML tags: "
+        system_text += f"<tools> {tools_str} </tools> "
+        system_text += "For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags: "
+        system_text += "<tool_call> {\"name\": <function-name>, \"arguments\": <args-json-object>} </tool_call><|im_end|> "
         
         system_ids = self.tokenizer.encode(system_text).ids
         all_input_ids.extend(system_ids)
@@ -64,21 +64,21 @@ class ToolCallDataset(Dataset):
                 # Map tool_call role to assistant role with <tool_call> tags
                 # Split into header and content for masking
                 
-                # Header: <|im_start|>assistant\n
-                header_text = "<|im_start|>assistant\n"
+                # Header: <|im_start|>assistant 
+                header_text = "<|im_start|>assistant "
                 header_ids = self.tokenizer.encode(header_text).ids
                 all_input_ids.extend(header_ids)
                 all_labels.extend([-100] * len(header_ids))
                 
-                # Content: <tool_call>...<|im_end|>\n
-                content_text = f"<tool_call>\n{content}\n</tool_call><|im_end|>\n"
+                # Content: <tool_call>...<|im_end|> 
+                content_text = f"<tool_call> {content} </tool_call><|im_end|> "
                 content_ids = self.tokenizer.encode(content_text).ids
                 all_input_ids.extend(content_ids)
                 all_labels.extend(content_ids) # Train on this
                 
             else:
                 # User or other roles: Mask everything
-                text = f"<|im_start|>{role}\n{content}<|im_end|>\n"
+                text = f"<|im_start|>{role} {content}<|im_end|> "
                 ids = self.tokenizer.encode(text).ids
                 all_input_ids.extend(ids)
                 all_labels.extend([-100] * len(ids))

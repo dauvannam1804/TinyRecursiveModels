@@ -59,7 +59,17 @@ def train_tokenizer(data_path: str, save_path: str, vocab_size: int = 32000):
     
     trainer = trainers.UnigramTrainer(
         vocab_size=vocab_size, 
-        special_tokens=["<unk>", "<s>", "</s>", "<pad>", "<mask >", "<|im_start|>", "<|im_end|>"],
+        special_tokens=[
+            # 1. Standard
+            "<pad>", "<s>", "</s>", "<unk>",
+            # 2. ChatML
+            "<|im_start|>", "<|im_end|>",
+            # 3. Tool Calling
+            "<tools>", "</tools>", 
+            "<tool_call>", "</tool_call>", 
+            # # 4. Thinking
+            # "<think>", "</think>"
+        ],
         unk_token="<unk>",
         show_progress=True
     )
