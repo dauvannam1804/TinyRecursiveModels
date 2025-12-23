@@ -282,34 +282,30 @@ class TRMToolTrainer:
         }
         
         z = None  # Start with learnable init
+        total_loss = 0.0  # Accumulate loss for single backward
         
-        # Deep Supervision Loop
+        # Deep Supervision Loop - accumulate loss, single backward at end
         for step in range(self.n_supervision_steps):
             # Forward pass
             if self.use_amp:
                 with autocast('cuda'):
                     z_next, logits, q_hat = self.model(input_ids, z_init=z)
                     loss, metrics = self.compute_loss(logits, labels, loss_weights, q_hat)
-                    loss = loss / self.gradient_accumulation_steps
             else:
                 z_next, logits, q_hat = self.model(input_ids, z_init=z)
                 loss, metrics = self.compute_loss(logits, labels, loss_weights, q_hat)
-                loss = loss / self.gradient_accumulation_steps
             
-            # Backward
-            if self.use_amp:
-                self.scaler.scale(loss).backward()
-            else:
-                loss.backward()
+            # Accumulate loss (will do single backward at end)
+            total_loss = total_loss + loss
             
             # Accumulate metrics
-            batch_metrics["loss"] += loss.item() * self.gradient_accumulation_steps
+            batch_metrics["loss"] += loss.item()
             for k, v in metrics.items():
                 batch_metrics[k] += v
             batch_metrics["supervision_steps"] += 1
             
-            # Detach z for next step
-            z = z_next
+            # Detach z for next step (break computational graph between steps)
+            z = z_next.detach()
             
             # Early stopping with ACT
             if self.use_act:
@@ -319,8 +315,21 @@ class TRMToolTrainer:
                     if mean_q_logits > 0 and step > 0:  # logits > 0 means sigmoid > 0.5
                         break
         
-        # Average metrics over supervision steps
+        # Average loss over supervision steps for stable training
         n_steps = batch_metrics["supervision_steps"]
+        avg_loss = total_loss / n_steps
+        
+        # Scale for gradient accumulation
+        scaled_loss = avg_loss / self.gradient_accumulation_steps
+        
+        # Single backward pass
+        if self.use_amp:
+            self.scaler.scale(scaled_loss).backward()
+        else:
+            scaled_loss.backward()
+        
+        # Average metrics over supervision steps
+        batch_metrics["loss"] /= n_steps  # Average reported loss
         for k in ["ce_loss", "act_loss", "accuracy"]:
             batch_metrics[k] /= n_steps
         

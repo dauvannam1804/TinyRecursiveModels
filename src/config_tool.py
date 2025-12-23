@@ -57,9 +57,9 @@ class TrainConfig:
     # Optimization
     batch_size: int = 8
     gradient_accumulation_steps: int = 4
-    learning_rate: float = 1e-4
-    embedding_lr: float = 1e-2  # Higher LR for embeddings (from paper)
-    weight_decay: float = 1.0  # Heavy weight decay (from paper)
+    learning_rate: float = 3e-4  # Slightly higher for faster convergence
+    embedding_lr: float = 1e-3  # Lower than paper (1e-2 was too high)
+    weight_decay: float = 0.1  # Lower than paper (1.0 was too aggressive)
     
     # Schedule
     num_epochs: int = 1  # Set to 1 for quick test, increase for full training
@@ -186,9 +186,9 @@ class Config:
             ),
             train=TrainConfig(
                 batch_size=8,
-                learning_rate=1e-4,
-                embedding_lr=1e-2,
-                weight_decay=1.0,
+                learning_rate=3e-4,
+                embedding_lr=1e-3,
+                weight_decay=0.1,
                 num_epochs=1,  # Quick test
                 warmup_steps=100,
                 use_ema=True,
