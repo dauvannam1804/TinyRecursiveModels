@@ -247,11 +247,13 @@ def format_hermes_dataset(
     train_data = []
     val_data = []
     stats = {
-        "single": 0,       # single_turn scenarios
-        "multi": 0,        # multi_turn scenarios  
-        "multi_step": 0,
-        "relevance": 0,
-        "other": 0,        # unknown scenarios
+        "single": 0,         # single tool call
+        "multiturn": 0,      # multiple turns with user follow-up
+        "multi_turn": 0,     # alternative naming
+        "multi_step": 0,     # sequential tool calls
+        "multistep": 0,      # alternative naming
+        "relevance": 0,      # no suitable tool
+        "other": 0,          # unknown scenarios
         "failed": 0
     }
     
