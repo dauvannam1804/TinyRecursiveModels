@@ -5,4 +5,4 @@ set -e
 
 # Run tokenizer training
 echo "Training tokenizer..."
-python src/tokenizer.py "$@"
+python -m src.tokenizer "$@"
