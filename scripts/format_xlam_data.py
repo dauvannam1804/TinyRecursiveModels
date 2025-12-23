@@ -67,7 +67,7 @@ def format_xlam_data(input_path, output_path, start_idx=0, end_idx=1000):
     print(f"Saved {len(formatted_data)} samples to {output_path}")
 
 if __name__ == "__main__":
-    input_file = "xlam_function_calling_60k.json"
+    input_file = "/home/namdv/workspace/TinyRecursiveModels/data/xlam_function_calling_60k_filtered.json"
     
     if os.path.exists(input_file):
         # Train: 0-1000
