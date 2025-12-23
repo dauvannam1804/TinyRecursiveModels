@@ -209,7 +209,7 @@ class TRMToolTrainer:
         Args:
             logits: [batch, seq, vocab]
             labels: [batch, seq]
-            loss_weights: [batch, seq] - weights for different parts
+            loss_weights: [batch, seq] - weights for different parts (1.0=normal, 2.0=tool_call)
             q_hat: [batch, seq] - halting probability
         
         Returns:
@@ -233,6 +233,26 @@ class TRMToolTrainer:
         ce_loss = weighted_ce.sum() / (valid_mask.sum() + 1e-8)
         
         metrics = {"ce_loss": ce_loss.item()}
+        
+        # Breakdown by token type for debugging
+        with torch.no_grad():
+            preds_flat = torch.argmax(logits_flat, dim=-1)
+            
+            # Tool call tokens (weight = 2.0)
+            tool_mask = (loss_weights_flat == 2.0) & (labels_flat != -100)
+            if tool_mask.sum() > 0:
+                tool_correct = ((preds_flat == labels_flat) & tool_mask).float().sum()
+                tool_total = tool_mask.float().sum()
+                metrics["tool_acc"] = (tool_correct / tool_total).item()
+                metrics["tool_loss"] = (ce_loss_flat[tool_mask].mean()).item()
+            
+            # Normal tokens (weight = 1.0)
+            normal_mask = (loss_weights_flat == 1.0) & (labels_flat != -100)
+            if normal_mask.sum() > 0:
+                normal_correct = ((preds_flat == labels_flat) & normal_mask).float().sum()
+                normal_total = normal_mask.float().sum()
+                metrics["normal_acc"] = (normal_correct / normal_total).item()
+                metrics["normal_loss"] = (ce_loss_flat[normal_mask].mean()).item()
         
         total_loss = ce_loss
         
@@ -394,13 +414,19 @@ class TRMToolTrainer:
                     if k in epoch_metrics:
                         epoch_metrics[k] += v
                 
-                # Update progress bar
-                pbar.set_postfix({
+                # Update progress bar with breakdown
+                postfix = {
                     "loss": f"{metrics['loss']:.4f}",
                     "acc": f"{metrics['accuracy']:.4f}",
                     "steps": metrics['supervision_steps'],
                     "lr": f"{self.get_lr():.2e}",
-                })
+                }
+                # Add tool accuracy if available
+                if 'tool_acc' in metrics:
+                    postfix["t_acc"] = f"{metrics['tool_acc']:.2f}"
+                if 'normal_acc' in metrics:
+                    postfix["n_acc"] = f"{metrics['normal_acc']:.2f}"
+                pbar.set_postfix(postfix)
                 
                 # Evaluation
                 if self.global_step > 0 and self.global_step % self.eval_interval == 0:
