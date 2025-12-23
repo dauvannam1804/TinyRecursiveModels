@@ -8,3 +8,5 @@ wandb/
 data/raw/
 data/xlam_function_calling_60k_filtered.json
 data/xlam_function_calling_60k.json
+data/*.json
+data/processed/
