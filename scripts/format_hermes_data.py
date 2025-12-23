@@ -342,8 +342,8 @@ if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description="Format Hermes dataset for TRM")
-    parser.add_argument("--train_size", type=int, default=10000, help="Number of training samples")
-    parser.add_argument("--val_size", type=int, default=1000, help="Number of validation samples")
+    parser.add_argument("--train_size", type=int, default=1000, help="Number of training samples")
+    parser.add_argument("--val_size", type=int, default=200, help="Number of validation samples")
     parser.add_argument("--output_dir", type=str, default="data/processed", help="Output directory")
     parser.add_argument("--preview", action="store_true", help="Preview samples only")
     
