@@ -62,7 +62,7 @@ class TrainConfig:
     weight_decay: float = 0.1  # Lower than paper (1.0 was too aggressive)
     
     # Schedule
-    num_epochs: int = 1  # Set to 1 for quick test, increase for full training
+    num_epochs: int = 3  # Set to 1 for quick test, increase for full training
     warmup_steps: int = 100  # Reduced for quick test
     
     # Gradient
