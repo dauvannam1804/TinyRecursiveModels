@@ -78,7 +78,7 @@ def remove_think_and_tool_call_tags(content: str) -> str:
     content = re.sub(r'<tool_call>[\s\S]*?</tool_call>\s*', '', content)
     return content.strip()
 
-def convert_hermes_to_swift(sample: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def convert_hermes_to_swift(sample: Dict[str, Any], debug: bool = False) -> Optional[Dict[str, Any]]:
     """
     Convert a single Hermes sample to SWIFT Agent format.
     
@@ -91,8 +91,8 @@ def convert_hermes_to_swift(sample: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             {"from": "tool", "value": "..."},  # tool response
             {"from": "assistant", "value": "final answer"}
         ],
-        "tools": [...],
-        "scenario_category": "single_turn" | "multi_turn" | "multi_step" | "relevance"
+        "tools": [...],  # Tools as separate field (string or list)
+        "scenario_category": "single" | "multi" | "multi_step" | "relevance"
     }
     
     SWIFT format:
@@ -107,6 +107,21 @@ def convert_hermes_to_swift(sample: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         ]
     }
     """
+    # Get tools directly from sample (preferred) or extract from system
+    tools_str = None
+    sample_tools = sample.get('tools')
+    if sample_tools:
+        if isinstance(sample_tools, str):
+            try:
+                # Validate it's valid JSON
+                tools = json.loads(sample_tools)
+                tools_str = json.dumps(tools, ensure_ascii=False)
+            except json.JSONDecodeError:
+                # Try to use as-is
+                tools_str = sample_tools
+        elif isinstance(sample_tools, list):
+            tools_str = json.dumps(sample_tools, ensure_ascii=False)
+    
     # Get conversations - can be list or JSON string
     conversations = sample.get('conversations', [])
     
@@ -115,12 +130,15 @@ def convert_hermes_to_swift(sample: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         try:
             conversations = json.loads(conversations)
         except json.JSONDecodeError:
+            if debug:
+                print(f"  Failed: cannot parse conversations JSON")
             return None
     
     if not conversations:
+        if debug:
+            print(f"  Failed: empty conversations")
         return None
     
-    tools_str = None
     messages = []
     
     for conv in conversations:
@@ -129,18 +147,19 @@ def convert_hermes_to_swift(sample: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         content = conv.get('value') or conv.get('content', '')
         
         if role == 'system':
-            # Extract tools from system prompt
-            tools_str = extract_tools_from_system(content)
+            # If tools not found yet, try to extract from system prompt
+            if not tools_str:
+                tools_str = extract_tools_from_system(content)
             # Note: We don't add system message to messages list
             # because SWIFT handles tools separately
             
-        elif role == 'user':
+        elif role in ('user', 'human'):
             messages.append({
                 "role": "user",
                 "content": content
             })
             
-        elif role == 'assistant':
+        elif role in ('assistant', 'gpt'):
             # Check for think block
             think_content = extract_think_block(content)
             
@@ -164,17 +183,12 @@ def convert_hermes_to_swift(sample: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                     "content": json.dumps(tc, ensure_ascii=False)
                 })
             
-            # Add final response if exists (after tool execution or without tools)
-            if remaining_text and not tool_calls:
-                # This is a final answer without tool calls
+            # Add final response if exists
+            if remaining_text:
                 messages.append({
                     "role": "assistant",
                     "content": remaining_text
                 })
-            elif remaining_text and tool_calls:
-                # There might be text after tool calls - handle as separate message
-                # But in SWIFT format, tool response comes between, so we skip this
-                pass
                 
         elif role == 'tool':
             # Tool response
@@ -183,24 +197,21 @@ def convert_hermes_to_swift(sample: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                 "content": content
             })
     
-    # Try to get tools from sample's 'tools' field if not found in system prompt
-    if not tools_str:
-        sample_tools = sample.get('tools')
-        if sample_tools:
-            if isinstance(sample_tools, str):
-                try:
-                    # Validate it's valid JSON
-                    tools = json.loads(sample_tools)
-                    tools_str = json.dumps(tools, ensure_ascii=False)
-                except json.JSONDecodeError:
-                    pass
-            elif isinstance(sample_tools, list):
-                tools_str = json.dumps(sample_tools, ensure_ascii=False)
-    
     # Validate: must have tools and at least user + assistant/tool_call
     if not tools_str:
+        if debug:
+            print(f"  Failed: no tools found")
         return None
     if len(messages) < 2:
+        if debug:
+            print(f"  Failed: only {len(messages)} messages")
+        return None
+    
+    # Check that we have at least one tool_call or assistant response
+    has_output = any(m['role'] in ('tool_call', 'assistant') for m in messages)
+    if not has_output:
+        if debug:
+            print(f"  Failed: no tool_call or assistant response")
         return None
     
     return {
@@ -208,6 +219,7 @@ def convert_hermes_to_swift(sample: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "messages": messages,
         "scenario": sample.get('scenario_category', 'unknown')
     }
+
 
 def format_hermes_dataset(
     output_dir: str = "data/processed",
@@ -235,10 +247,11 @@ def format_hermes_dataset(
     train_data = []
     val_data = []
     stats = {
-        "single_turn": 0,
-        "multi_turn": 0,
+        "single": 0,       # single_turn scenarios
+        "multi": 0,        # multi_turn scenarios  
         "multi_step": 0,
         "relevance": 0,
+        "other": 0,        # unknown scenarios
         "failed": 0
     }
     
@@ -268,12 +281,14 @@ def format_hermes_dataset(
             print("=" * 50 + "\n")
             debug_shown = True
             
-        converted = convert_hermes_to_swift(sample)
+        converted = convert_hermes_to_swift(sample, debug=(stats["failed"] < 3 and i < 10))
         
         if converted:
             scenario = converted.get('scenario', 'unknown')
             if scenario in stats:
                 stats[scenario] += 1
+            else:
+                stats["other"] += 1
             
             # Split: first train_size go to train, rest to val
             if len(train_data) < train_size:
