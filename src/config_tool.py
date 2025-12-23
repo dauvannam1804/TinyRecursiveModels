@@ -190,7 +190,7 @@ class Config:
                 learning_rate=3e-4,
                 embedding_lr=1e-3,
                 weight_decay=0.1,
-                num_epochs=1,  # Quick test
+                num_epochs=3,  # 3 epochs for tool calling
                 warmup_steps=100,
                 use_ema=True,
                 use_act=True,
