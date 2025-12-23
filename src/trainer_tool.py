@@ -282,56 +282,52 @@ class TRMToolTrainer:
         }
         
         z = None  # Start with learnable init
-        total_loss = 0.0  # Accumulate loss for single backward
         
-        # Deep Supervision Loop - accumulate loss, single backward at end
+        # Deep Supervision: Train on LAST step only (memory efficient)
+        # But run all steps to get final z state
         for step in range(self.n_supervision_steps):
-            # Forward pass
-            if self.use_amp:
-                with autocast('cuda'):
+            is_last_step = (step == self.n_supervision_steps - 1)
+            
+            # Early stopping check first (before forward)
+            if self.use_act and step > 0 and z is not None:
+                with torch.no_grad():
+                    # Quick forward just to check q
+                    _, _, q_check = self.model(input_ids, z_init=z)
+                    mean_q_logits = q_check.mean().item()
+                    if mean_q_logits > 0:  # Confident enough to stop
+                        is_last_step = True
+            
+            if is_last_step:
+                # Full forward with gradients for the final step
+                if self.use_amp:
+                    with autocast('cuda'):
+                        z_next, logits, q_hat = self.model(input_ids, z_init=z)
+                        loss, metrics = self.compute_loss(logits, labels, loss_weights, q_hat)
+                else:
                     z_next, logits, q_hat = self.model(input_ids, z_init=z)
                     loss, metrics = self.compute_loss(logits, labels, loss_weights, q_hat)
+                
+                # Scale for gradient accumulation
+                scaled_loss = loss / self.gradient_accumulation_steps
+                
+                # Backward
+                if self.use_amp:
+                    self.scaler.scale(scaled_loss).backward()
+                else:
+                    scaled_loss.backward()
+                
+                # Record metrics
+                batch_metrics["loss"] = loss.item()
+                for k, v in metrics.items():
+                    batch_metrics[k] = v
+                batch_metrics["supervision_steps"] = step + 1
+                
+                break  # Done
             else:
-                z_next, logits, q_hat = self.model(input_ids, z_init=z)
-                loss, metrics = self.compute_loss(logits, labels, loss_weights, q_hat)
-            
-            # Accumulate loss (will do single backward at end)
-            total_loss = total_loss + loss
-            
-            # Accumulate metrics
-            batch_metrics["loss"] += loss.item()
-            for k, v in metrics.items():
-                batch_metrics[k] += v
-            batch_metrics["supervision_steps"] += 1
-            
-            # Detach z for next step (break computational graph between steps)
-            z = z_next.detach()
-            
-            # Early stopping with ACT
-            if self.use_act:
-                # Check if model is confident (q_logits > 0 means prob > 0.5)
+                # Forward without gradients for intermediate steps
                 with torch.no_grad():
-                    mean_q_logits = q_hat.mean().item()  # q_hat is now logits
-                    if mean_q_logits > 0 and step > 0:  # logits > 0 means sigmoid > 0.5
-                        break
-        
-        # Average loss over supervision steps for stable training
-        n_steps = batch_metrics["supervision_steps"]
-        avg_loss = total_loss / n_steps
-        
-        # Scale for gradient accumulation
-        scaled_loss = avg_loss / self.gradient_accumulation_steps
-        
-        # Single backward pass
-        if self.use_amp:
-            self.scaler.scale(scaled_loss).backward()
-        else:
-            scaled_loss.backward()
-        
-        # Average metrics over supervision steps
-        batch_metrics["loss"] /= n_steps  # Average reported loss
-        for k in ["ce_loss", "act_loss", "accuracy"]:
-            batch_metrics[k] /= n_steps
+                    z_next, _, _ = self.model(input_ids, z_init=z)
+                z = z_next  # Already detached due to no_grad
         
         return batch_metrics
     

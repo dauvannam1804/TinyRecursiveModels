@@ -55,8 +55,8 @@ class ModelConfig:
 class TrainConfig:
     """Training configuration"""
     # Optimization
-    batch_size: int = 8
-    gradient_accumulation_steps: int = 4
+    batch_size: int = 4  # Reduced for memory
+    gradient_accumulation_steps: int = 8  # Increased to compensate
     learning_rate: float = 3e-4  # Slightly higher for faster convergence
     embedding_lr: float = 1e-3  # Lower than paper (1e-2 was too high)
     weight_decay: float = 0.1  # Lower than paper (1.0 was too aggressive)
@@ -185,7 +185,8 @@ class Config:
                 use_swiglu=True,
             ),
             train=TrainConfig(
-                batch_size=8,
+                batch_size=4,
+                gradient_accumulation_steps=8,
                 learning_rate=3e-4,
                 embedding_lr=1e-3,
                 weight_decay=0.1,

@@ -90,7 +90,7 @@ def main():
     parser.add_argument("--resume", type=str, default=None,
                        help="Path to checkpoint to resume from")
     parser.add_argument("--max_seq_len", type=int, default=None)
-    parser.add_argument("--num_workers", type=int, default=4)
+    parser.add_argument("--num_workers", type=int, default=2)  # Reduced for Colab
     
     args = parser.parse_args()
     
