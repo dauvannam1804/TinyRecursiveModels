@@ -10,7 +10,7 @@ class ModelConfig:
     n_latent_steps: int = 6  # n in paper (z update loop)
     n_recursion_steps: int = 3 # T in paper (Deep Recursion loop)
     n_supervision_steps: int = 16 # N_sup in paper
-    vocab_size: int = 8000 # Will be updated after tokenizer training
+    vocab_size: int = 50000 # Will be updated after tokenizer training
     max_seq_len: int = 512
     dropout: float = 0.1
 
