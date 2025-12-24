@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-from torch.amp import autocast, GradScaler  # Updated API
+from torch.cuda.amp import autocast, GradScaler
 from typing import Optional, Dict, Any, Tuple
 import os
 import json
@@ -160,6 +160,9 @@ class TRMToolTrainer:
             betas=(0.9, 0.95),
             weight_decay=weight_decay,
         )
+
+        # Store initial LRs for robust scheduling
+        self.initial_lrs = [pg['lr'] for pg in self.optimizer.param_groups]
         
         # Loss functions
         self.ce_loss = nn.CrossEntropyLoss(ignore_index=-100, reduction='none')
@@ -172,7 +175,7 @@ class TRMToolTrainer:
             self.ema = None
         
         # Mixed precision
-        self.scaler = GradScaler('cuda') if self.use_amp else None
+        self.scaler = GradScaler() if self.use_amp else None
         
         # Training state
         self.global_step = 0
@@ -188,13 +191,14 @@ class TRMToolTrainer:
         return self.learning_rate
     
     def update_lr(self):
-        """Update learning rate"""
-        lr = self.get_lr()
+        """Update learning rate safe implementation"""
+        # Calculate scaling factor based on main LR
+        current_lr = self.get_lr()
+        # Avoid division by zero
+        ratio = current_lr / self.learning_rate if self.learning_rate > 0 else 0.0
+        
         for i, param_group in enumerate(self.optimizer.param_groups):
-            if i == 0:  # Main params
-                param_group['lr'] = lr
-            else:  # Embeddings
-                param_group['lr'] = lr * 100  # embedding_lr is 100x main lr
+            param_group['lr'] = self.initial_lrs[i] * ratio
     
     def compute_loss(
         self,
@@ -320,7 +324,7 @@ class TRMToolTrainer:
             if is_last_step:
                 # Full forward with gradients for the final step
                 if self.use_amp:
-                    with autocast('cuda'):
+                    with autocast():
                         z_next, logits, q_hat = self.model(input_ids, z_init=z)
                         loss, metrics = self.compute_loss(logits, labels, loss_weights, q_hat)
                 else:
@@ -428,15 +432,15 @@ class TRMToolTrainer:
                     postfix["n_acc"] = f"{metrics['normal_acc']:.2f}"
                 pbar.set_postfix(postfix)
                 
-                # Evaluation
-                if self.global_step > 0 and self.global_step % self.eval_interval == 0:
-                    if self.val_loader:
-                        val_loss = self.evaluate()
-                        print(f"\nStep {self.global_step} - Val Loss: {val_loss:.4f}")
-                        
-                        if val_loss < self.best_val_loss:
-                            self.best_val_loss = val_loss
-                            self.save_checkpoint("best")
+                # Evaluation (DISABLED STEP-BASED)
+                # if self.global_step > 0 and self.global_step % self.eval_interval == 0:
+                #     if self.val_loader:
+                #         val_loss = self.evaluate()
+                #         print(f"\nStep {self.global_step} - Val Loss: {val_loss:.4f}")
+                #         
+                #         if val_loss < self.best_val_loss:
+                #             self.best_val_loss = val_loss
+                #             self.save_checkpoint("best")
                 
                 # Save checkpoint
                 if self.global_step > 0 and self.global_step % self.save_interval == 0:
@@ -459,6 +463,16 @@ class TRMToolTrainer:
             
             # Save epoch checkpoint
             self.save_checkpoint(f"epoch_{epoch+1}")
+            
+            # Evaluate at end of epoch
+            if self.val_loader:
+                print(f"Evaluating epoch {epoch+1}...")
+                val_loss = self.evaluate()
+                print(f"Epoch {epoch+1} Val Loss: {val_loss:.4f}")
+                
+                if val_loss < self.best_val_loss:
+                    self.best_val_loss = val_loss
+                    self.save_checkpoint("best")
         
         # Save final checkpoint
         self.save_checkpoint("final")

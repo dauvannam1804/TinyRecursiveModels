@@ -4,5 +4,11 @@ __pycache__/
 *.pyc
 .ipynb_checkpoints/
 checkpoints/
+checkpoints_tiny/
+checkpoints_base/
+checkpoints_medium/
+checkpoints_large/
 wandb/
 data/raw/
+temp_comparison_repo/
+data/processed/*.json

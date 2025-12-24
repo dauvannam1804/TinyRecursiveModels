@@ -12,6 +12,14 @@ class TRMVariant(str, Enum):
     STANDARD = "standard"  # Uses both y (answer) and z (latent)
     SINGLE_Z = "single_z"  # Uses only z (latent -> answer)
 
+class ModelSize(str, Enum):
+    """Model size presets"""
+    TINY = "tiny"
+    SMALL = "small"
+    BASE = "base"
+    MEDIUM = "medium"
+    LARGE = "large"
+
 class TaskType(str, Enum):
     """Training task types"""
     TOOL_CALLING = "tool_calling"
@@ -33,6 +41,11 @@ class ModelConfig:
     
     # Model variant
     variant: TRMVariant = TRMVariant.SINGLE_Z
+    size: ModelSize = ModelSize.BASE
+
+    # Generation Head
+    n_gen_layers: int = 2
+    n_gen_heads: int = 4
     
     # Vocabulary
     vocab_size: int = 32000
@@ -226,6 +239,152 @@ class Config:
             )
         )
 
+    @classmethod
+    def tiny(cls) -> "Config":
+        """Tiny: 7M params (original) - for testing"""
+        return cls(
+            model=ModelConfig(
+                d_model=256,
+                n_heads=4,
+                n_layers=2,
+                n_latent_steps=6,
+                n_recursion_steps=3,
+                n_supervision_steps=16,
+                size=ModelSize.TINY,
+                max_seq_len=512,
+            ),
+            train=TrainConfig(
+                batch_size=4,
+                learning_rate=3e-4,
+                embedding_lr=1e-2,
+                weight_decay=1.0,
+                num_epochs=3,
+                output_dir="checkpoints_tiny",
+            ),
+            data=DataConfig(max_seq_len=512),
+        )
+
+    @classmethod
+    def small(cls) -> "Config":
+        """Small: 50M params - fast prototyping"""
+        return cls(
+            model=ModelConfig(
+                d_model=512,
+                n_heads=8,
+                n_layers=2,  # Keep 2!
+                n_latent_steps=6,
+                n_recursion_steps=3,
+                n_supervision_steps=16,
+                size=ModelSize.SMALL,
+                max_seq_len=1024,
+            ),
+            train=TrainConfig(
+                batch_size=4,
+                learning_rate=2e-4,
+                embedding_lr=1e-2,
+                weight_decay=1.0,
+                num_epochs=5,
+                warmup_steps=200,
+                output_dir="checkpoints_small",
+            ),
+            data=DataConfig(max_seq_len=1024),
+        )
+
+    @classmethod
+    def base(cls) -> "Config":
+        """Base: 150M params - RECOMMENDED"""
+        return cls(
+            model=ModelConfig(
+                d_model=768,
+                n_heads=12,
+                n_layers=2,  # Keep 2!
+                n_latent_steps=6,
+                n_recursion_steps=3,
+                n_supervision_steps=16,
+                
+                # Generation Head
+                n_gen_layers=2, # Number of layers in unified generation head
+                n_gen_heads=4,  # Number of heads in unified generation head
+                
+                # Sizes
+                size=ModelSize.BASE,
+                max_seq_len=1024,
+            ),
+            train=TrainConfig(
+                batch_size=4,
+                learning_rate=1e-4,
+                embedding_lr=1e-2,
+                weight_decay=1.0,
+                num_epochs=10,
+                warmup_steps=500,
+                ema_decay=0.9999,
+                output_dir="checkpoints_base",
+                use_wandb=True,
+            ),
+            data=DataConfig(max_seq_len=1024),
+        )
+        
+    @classmethod
+    def medium(cls) -> "Config":
+        """Medium: 300M params"""
+        return cls(
+            model=ModelConfig(
+                d_model=1024,
+                n_heads=16,
+                n_layers=2,
+                n_latent_steps=8,
+                n_recursion_steps=4,
+                n_supervision_steps=16,
+                size=ModelSize.MEDIUM,
+                max_seq_len=1024,
+            ),
+            train=TrainConfig(
+                batch_size=2,
+                learning_rate=5e-5,
+                embedding_lr=5e-4,
+                num_epochs=15,
+                warmup_steps=1000,
+                ema_decay=0.9999,
+                output_dir="checkpoints_medium",
+                use_wandb=True,
+            ),
+            data=DataConfig(max_seq_len=1024),
+        )
+    
+    @classmethod
+    def large(cls) -> "Config":
+        """Large: 500M params - maximum performance"""
+        return cls(
+            model=ModelConfig(
+                d_model=1024,
+                n_heads=16,
+                n_layers=4,
+                n_latent_steps=8,
+                n_recursion_steps=4,
+                n_supervision_steps=16,
+                size=ModelSize.LARGE,
+                max_seq_len=2048,
+            ),
+            train=TrainConfig(
+                batch_size=1,  # Very small batch
+                learning_rate=3e-5,
+                embedding_lr=1e-4,
+                num_epochs=20,
+                warmup_steps=2000,
+                ema_decay=0.99995,
+                output_dir="checkpoints_large",
+                use_wandb=True,
+            ),
+            data=DataConfig(max_seq_len=2048),
+        )
+
 # Preset configs
 TOOL_CALLING_CONFIG = Config.for_tool_calling(TRMVariant.SINGLE_Z)
 PUZZLE_CONFIG = Config.for_puzzle(TRMVariant.STANDARD)
+
+# New Presets
+TINY_CONFIG = Config.tiny()
+SMALL_CONFIG = Config.small()
+BASE_CONFIG = Config.base()
+MEDIUM_CONFIG = Config.medium()
+LARGE_CONFIG = Config.large()

@@ -26,7 +26,11 @@ import numpy as np
 # Add src to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from src.config_tool import Config, TRMVariant, TOOL_CALLING_CONFIG
+from src.config_tool import (
+    Config, TRMVariant, TOOL_CALLING_CONFIG,
+    TINY_CONFIG, SMALL_CONFIG, BASE_CONFIG,
+    MEDIUM_CONFIG, LARGE_CONFIG
+)
 from src.model_single_z import TRMSingleZ, create_trm_single_z
 from src.dataset_tool import HermesToolDataset, create_dataloaders
 from src.trainer_tool import TRMToolTrainer
@@ -52,7 +56,7 @@ def main():
     
     # Config
     parser.add_argument("--config", type=str, default="tool_calling",
-                       choices=["tool_calling", "custom"],
+                       choices=["tool_calling", "custom", "tiny", "small", "base", "medium", "large"],
                        help="Configuration preset")
     
     # Data paths
@@ -97,6 +101,16 @@ def main():
     # Load config
     if args.config == "tool_calling":
         config = TOOL_CALLING_CONFIG
+    elif args.config == "tiny":
+        config = TINY_CONFIG
+    elif args.config == "small":
+        config = SMALL_CONFIG
+    elif args.config == "base":
+        config = BASE_CONFIG
+    elif args.config == "medium":
+        config = MEDIUM_CONFIG
+    elif args.config == "large":
+        config = LARGE_CONFIG
     else:
         config = Config()
     
