@@ -75,8 +75,8 @@ class TinyRecursiveModel(nn.Module):
         self.y_init_param = nn.Parameter(torch.zeros(1, 1, config.d_model))
         self.z_init_param = nn.Parameter(torch.zeros(1, 1, config.d_model))
         # Optional: Initialize with small random values instead of pure zeros?
-        # nn.init.normal_(self.y_init_param, std=0.02)
-        # nn.init.normal_(self.z_init_param, std=0.02)
+        nn.init.normal_(self.y_init_param, std=0.02)
+        nn.init.normal_(self.z_init_param, std=0.02)
 
     def latent_recursion(self, x: torch.Tensor, y: torch.Tensor, z: torch.Tensor, mask: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
         """
