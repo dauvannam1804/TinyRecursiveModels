@@ -101,8 +101,62 @@ class InferenceEngine:
         # Generate
         return self.generate(text, max_new_tokens=max_new_tokens)
 
+    def _parse_tool_call(prediction_raw: str, gt_name: str, gt_args: dict):
+    """
+    Parse prediction_raw để trích pred_name và pred_args
+    Ưu tiên parse theo gt_name & gt_args
+    """
+    # -----------------------------
+    # 1. Thử parse JSON hoàn chỉnh
+    # -----------------------------
+    json_pattern = r'\{[\s\S]*?"name"\s*:\s*"' + re.escape(gt_name) + r'"[\s\S]*?\}'
+    matches = re.findall(json_pattern, prediction_raw)
+
+    for m in matches:
+        try:
+            parsed = json.loads(m)
+            return {
+                "name": parsed.get("name", ""),
+                "arguments": parsed.get("arguments", {})
+            }
+        except json.JSONDecodeError:
+            pass
+
+    # -----------------------------
+    # 2. Fallback: heuristic parse
+    # -----------------------------
+    pred_name = ""
+    pred_args = {}
+
+    # 2.1 Tool name
+    if gt_name in prediction_raw:
+        pred_name = gt_name
+    else:
+        return {"name": "", "arguments": {}}
+
+    # 2.2 Arguments (dựa vào gt_args keys)
+    for arg_key, arg_val in gt_args.items():
+        # Nếu GT là số → tìm số trong text
+        if isinstance(arg_val, int):
+            num_matches = re.findall(r'\b\d+\b', prediction_raw)
+            if num_matches:
+                pred_args[arg_key] = int(num_matches[-1])  # thường số cuối là đúng
+
+        # Nếu GT là string
+        elif isinstance(arg_val, str):
+            str_pattern = rf'"{arg_key}"\s*:\s*"([^"]+)"'
+            m = re.search(str_pattern, prediction_raw)
+            if m:
+                pred_args[arg_key] = m.group(1)
+
+    return {
+        "name": pred_name,
+        "arguments": pred_args
+    }
+
     def evaluate_dataset(self, data_path: str, n_samples: int = None) -> float:
         import json
+        import csv
         from tqdm import tqdm
         
         if not os.path.exists(data_path):
@@ -120,8 +174,10 @@ class InferenceEngine:
         if n_samples:
             data = data[:n_samples]
             
-        correct = 0
+        correct_name = 0
+        correct_full = 0
         total = 0
+        results = []
         
         print(f"Evaluating on {len(data)} samples...")
         for item in tqdm(data):
@@ -129,54 +185,75 @@ class InferenceEngine:
             if "tools" in item and "messages" in item:
                 tools = item["tools"]
                 query = ""
-                solution = ""
+                solution_str = ""
                 
                 for msg in item["messages"]:
                     if msg["role"] == "user":
                         query = msg["content"]
                     elif msg["role"] == "tool_call":
-                        solution = f"<tool_call>\n{msg['content']}\n</tool_call>"
+                        solution_str = msg["content"] # Keep raw content for parsing
                 
-                if not query or not solution:
+                if not query or not solution_str:
                     continue
                     
                 # Generate
-                prediction = self.generate_tool_call(tools, query)
+                prediction_raw = self.generate_tool_call(tools, query)
                 
-                # Re-construct prompt to strip it
-                prompt_text = "<|im_start|>system\n"
-                prompt_text += "You are a helpful assistant.\n"
-                prompt_text += "# Tools\n"
-                prompt_text += "You may call one or more functions to assist with the user query.\n"
-                prompt_text += "You are provided with function signatures within <tools></tools> XML tags:\n"
-                prompt_text += f"<tools>\n{tools}\n</tools>\n"
-                prompt_text += "For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n"
-                prompt_text += "<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call><|im_end|>\n"
-                prompt_text += f"<|im_start|>user\n{query}<|im_end|>\n"
-                prompt_text += "<|im_start|>assistant\n"
+                # Parse Ground Truth
+                try:
+                    gt_json = json.loads(solution_str)
+                except json.JSONDecodeError:
+                    gt_json = {}
                 
-                if prediction.startswith(prompt_text):
-                    prediction = prediction[len(prompt_text):].strip()
-                else:
-                    # Fallback: try to find the last <|im_start|>assistant\n
-                    idx = prediction.rfind("<|im_start|>assistant\n")
-                    if idx != -1:
-                        prediction = prediction[idx + len("<|im_start|>assistant\n"):].strip()
+                gt_name = gt_json.get("name", "")
+                gt_args = gt_json.get("arguments", {})
                 
-                # Normalize for comparison (simple strip)
-                solution = solution.strip()
-                prediction = prediction.strip()
+                # Parse Prediction with Hint
+                pred_json = self._parse_tool_call(prediction_raw, hint_name=gt_name)
+                pred_name = pred_json.get("name", "")
+                pred_args = pred_json.get("arguments", {})
                 
-                # Remove <|im_end|> if present in prediction
-                prediction = prediction.replace("<|im_end|>", "").strip()
+                # Check Name Match
+                name_match = (gt_name.lower() == pred_name.lower()) and (gt_name != "")
+                if name_match:
+                    correct_name += 1
+                    
+                # Check Full Match (Name + Args)
+                # Note: Arguments comparison can be tricky (order, types). 
+                # Here we do a simple dict comparison.
+                full_match = name_match and (gt_args == pred_args)
+                if full_match:
+                    correct_full += 1
                 
-                if prediction == solution:
-                    correct += 1
                 total += 1
+                
+                results.append({
+                    "query": query,
+                    "gt_name": gt_name,
+                    "gt_args": json.dumps(gt_args),
+                    "pred_name": pred_name,
+                    "pred_args": json.dumps(pred_args),
+                    "name_match": name_match,
+                    "full_match": full_match,
+                    "raw_prediction": prediction_raw
+                })
             
-        accuracy = correct / total if total > 0 else 0
-        print(f"Accuracy: {accuracy:.2%} ({correct}/{total})")
-        return accuracy
+        acc_name = correct_name / total if total > 0 else 0
+        acc_full = correct_full / total if total > 0 else 0
+        
+        print(f"Tool Name Accuracy: {acc_name:.2%} ({correct_name}/{total})")
+        print(f"Full Accuracy: {acc_full:.2%} ({correct_full}/{total})")
+        
+        # Save results to CSV
+        output_csv = "inference_results.csv"
+        with open(output_csv, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=["query", "gt_name", "gt_args", "pred_name", "pred_args", "name_match", "full_match", "raw_prediction"])
+            writer.writeheader()
+            writer.writerows(results)
+            
+        print(f"Results saved to {output_csv}")
+        
+        return acc_full
 
 if __name__ == "__main__":
     # Example usage
