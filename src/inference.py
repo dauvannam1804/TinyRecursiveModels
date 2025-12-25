@@ -102,57 +102,68 @@ class InferenceEngine:
         return self.generate(text, max_new_tokens=max_new_tokens)
 
     def _parse_tool_call(prediction_raw: str, gt_name: str, gt_args: dict):
-    """
-    Parse prediction_raw để trích pred_name và pred_args
-    Ưu tiên parse theo gt_name & gt_args
-    """
-    # -----------------------------
-    # 1. Thử parse JSON hoàn chỉnh
-    # -----------------------------
-    json_pattern = r'\{[\s\S]*?"name"\s*:\s*"' + re.escape(gt_name) + r'"[\s\S]*?\}'
-    matches = re.findall(json_pattern, prediction_raw)
+        """
+        Parse a raw model output to extract the predicted tool name and arguments.
+        The parsing is guided by the ground-truth tool name and arguments.
+        """
+        # -------------------------------------------------
+        # 1. Try to parse a complete and valid JSON snippet
+        # -------------------------------------------------
+        json_pattern = (
+            r'\{[\s\S]*?"name"\s*:\s*"' +
+            re.escape(gt_name) +
+            r'"[\s\S]*?\}'
+        )
+        matches = re.findall(json_pattern, prediction_raw)
 
-    for m in matches:
-        try:
-            parsed = json.loads(m)
-            return {
-                "name": parsed.get("name", ""),
-                "arguments": parsed.get("arguments", {})
-            }
-        except json.JSONDecodeError:
-            pass
+        for m in matches:
+            try:
+                parsed = json.loads(m)
+                return {
+                    "name": parsed.get("name", ""),
+                    "arguments": parsed.get("arguments", {})
+                }
+            except json.JSONDecodeError:
+                # Skip invalid or incomplete JSON snippets
+                pass
 
-    # -----------------------------
-    # 2. Fallback: heuristic parse
-    # -----------------------------
-    pred_name = ""
-    pred_args = {}
+        # -------------------------------------------------
+        # 2. Fallback: heuristic-based parsing
+        # -------------------------------------------------
+        pred_name = ""
+        pred_args = {}
 
-    # 2.1 Tool name
-    if gt_name in prediction_raw:
-        pred_name = gt_name
-    else:
-        return {"name": "", "arguments": {}}
+        # 2.1 Tool name extraction
+        # If the ground-truth tool name appears in the raw output,
+        # assume the model intended to call this tool
+        if gt_name in prediction_raw:
+            pred_name = gt_name
+        else:
+            # Tool name not found → no valid tool call detected
+            return {"name": "", "arguments": {}}
 
-    # 2.2 Arguments (dựa vào gt_args keys)
-    for arg_key, arg_val in gt_args.items():
-        # Nếu GT là số → tìm số trong text
-        if isinstance(arg_val, int):
-            num_matches = re.findall(r'\b\d+\b', prediction_raw)
-            if num_matches:
-                pred_args[arg_key] = int(num_matches[-1])  # thường số cuối là đúng
+        # 2.2 Argument extraction (guided by ground-truth arguments)
+        for arg_key, arg_val in gt_args.items():
+            # If the ground-truth argument is an integer,
+            # extract numeric values from the raw output
+            if isinstance(arg_val, int):
+                num_matches = re.findall(r'\b\d+\b', prediction_raw)
+                if num_matches:
+                    # Heuristic: the last number often corresponds to the argument value
+                    pred_args[arg_key] = int(num_matches[-1])
 
-        # Nếu GT là string
-        elif isinstance(arg_val, str):
-            str_pattern = rf'"{arg_key}"\s*:\s*"([^"]+)"'
-            m = re.search(str_pattern, prediction_raw)
-            if m:
-                pred_args[arg_key] = m.group(1)
+            # If the ground-truth argument is a string,
+            # attempt to extract a quoted string value
+            elif isinstance(arg_val, str):
+                str_pattern = rf'"{arg_key}"\s*:\s*"([^"]+)"'
+                m = re.search(str_pattern, prediction_raw)
+                if m:
+                    pred_args[arg_key] = m.group(1)
 
-    return {
-        "name": pred_name,
-        "arguments": pred_args
-    }
+        return {
+            "name": pred_name,
+            "arguments": pred_args
+        }
 
     def evaluate_dataset(self, data_path: str, n_samples: int = None) -> float:
         import json
