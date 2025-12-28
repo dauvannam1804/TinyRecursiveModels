@@ -80,6 +80,60 @@ class InferenceEngine:
         decoded = self.tokenizer.decode(output_ids)
         return decoded
 
+    def generate_adaptive(self, prompt: str, max_new_tokens: int = 50, temperature: float = 1.0, halting_threshold: float = 0.9) -> str:
+        # Encode
+        encoded = self.tokenizer.encode(prompt)
+        ids = [self.bos_token_id] + encoded.ids
+        
+        # Truncate to ensure we have space for generation
+        max_input_len = self.config.model.max_seq_len - max_new_tokens
+        if len(ids) > max_input_len:
+            print(f"Warning: Prompt too long ({len(ids)} tokens). Truncating to {max_input_len} tokens to fit max_seq_len ({self.config.model.max_seq_len}).")
+            ids = ids[:max_input_len]
+            
+        input_ids = torch.tensor([ids], dtype=torch.long, device=self.device)
+        
+        # Generation Loop
+        for _ in range(max_new_tokens):
+            # Prepare inputs
+            seq_len = input_ids.size(1)
+            attention_mask = torch.ones((1, seq_len), device=self.device) # Simple mask for now
+            
+            # Initialize y and z (Learnable init)
+            y, z = None, None
+            
+            # Deep Supervision Loop (Simulate "Thinking")
+            logits = None
+            for step in range(self.config.model.n_supervision_steps):
+                y, z, logits, q_hat = self.model(input_ids, attention_mask, y_init=y, z_init=z)
+                
+                # Check halting condition for the last token
+                # q_hat is [batch, seq_len]
+                # We check the probability of halting for the last token
+                current_halting_prob = q_hat[0, -1].item()
+                if current_halting_prob > halting_threshold:
+                    # Optional: Print debug info
+                    # print(f"Halted at step {step+1}/{self.config.model.n_supervision_steps} with q_hat={current_halting_prob:.4f}")
+                    break
+            
+            # Get next token from the last position
+            next_token_logits = logits[:, -1, :] / temperature
+            
+            # Greedy or Sampling (Here Greedy for math)
+            next_token_id = torch.argmax(next_token_logits, dim=-1).unsqueeze(-1)
+            
+            # Append
+            input_ids = torch.cat([input_ids, next_token_id], dim=-1)
+            
+            # Stop condition
+            if next_token_id.item() == self.eos_token_id:
+                break
+                
+        # Decode
+        output_ids = input_ids[0].tolist()
+        decoded = self.tokenizer.decode(output_ids)
+        return decoded
+
     def generate_tool_call(self, tools: str, query: str, max_new_tokens: int = 200) -> str:
         # Construct ChatML text with Hermes template
         # 1. System Prompt
@@ -282,5 +336,13 @@ if __name__ == "__main__":
     
     prompt = "Problem: 1+1=\nSolution:"
     print(f"Prompt: {prompt}")
+    
+    print("-" * 20)
+    print("Standard Generation:")
     result = engine.generate(prompt)
     print(f"Result: {result}")
+    
+    print("-" * 20)
+    print("Adaptive Generation (q_hat):")
+    result_adaptive = engine.generate_adaptive(prompt)
+    print(f"Result: {result_adaptive}")
