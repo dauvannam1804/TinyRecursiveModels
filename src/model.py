@@ -3,6 +3,7 @@ import torch.nn as nn
 from typing import Optional, Tuple
 from src.config import ModelConfig
 from src.layers import SelfAttention, MLP, AddNorm
+from src.glinear import GLINEAR
 
 class TRMBlock(nn.Module):
     """
@@ -71,6 +72,10 @@ class TinyRecursiveModel(nn.Module):
         # Q-head for Adaptive Computation Time (ACT)
         self.q_head = nn.Linear(config.d_model, 1)
         
+        # GLINEAR Sub-network for Parameter Extraction
+        self.param_net = GLINEAR(config.d_model, config.n_heads, config.dropout)
+        self.param_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
+        
         # Learnable Initialization for y and z
         self.y_init_param = nn.Parameter(torch.zeros(1, 1, config.d_model))
         self.z_init_param = nn.Parameter(torch.zeros(1, 1, config.d_model))
@@ -98,10 +103,10 @@ class TinyRecursiveModel(nn.Module):
         return y, z
 
     def forward(self, input_ids: torch.Tensor, attention_mask: Optional[torch.Tensor] = None, 
-                y_init: Optional[torch.Tensor] = None, z_init: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+                y_init: Optional[torch.Tensor] = None, z_init: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Forward pass for ONE supervision step.
-        Returns: y_next, z_next, logits, q_hat
+        Forward pas s for ONE supervision step.
+        Returns: y_next, z_next, logits, q_hat, param_logits
         """
         batch_size, seq_len = input_ids.size()
         device = input_ids.device
@@ -138,7 +143,13 @@ class TinyRecursiveModel(nn.Module):
         # Q-head (Halting Probability)
         q_hat = torch.sigmoid(self.q_head(y)).squeeze(-1) # [batch, seq_len]
         
-        return y, z, logits, q_hat
+        # GLINEAR Parameter Extraction (Detached Gradient)
+        y_detached = y.detach()
+        # We must pass the causal mask to prevent leakage during training!
+        param_feat = self.param_net(y_detached, mask=causal_mask)
+        param_logits = self.param_head(param_feat)
+        
+        return y, z, logits, q_hat, param_logits
 
 if __name__ == "__main__":
     cfg = ModelConfig()
@@ -146,9 +157,12 @@ if __name__ == "__main__":
     print("Model created.")
     
     dummy_input = torch.randint(0, cfg.vocab_size, (2, 10))
-    y, z, logits, q_hat = model(dummy_input)
+    dummy_input = torch.randint(0, cfg.vocab_size, (2, 10))
+    y, z, logits, q_hat, param_logits = model(dummy_input)
     print("Logits shape:", logits.shape)
     print("Q_hat shape:", q_hat.shape)
+    print("Param Logits shape:", param_logits.shape)
     assert logits.shape == (2, 10, cfg.vocab_size)
     assert q_hat.shape == (2, 10)
+    assert param_logits.shape == (2, 10, cfg.vocab_size)
     print("Test passed.")

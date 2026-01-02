@@ -48,10 +48,19 @@ class Trainer:
                 # Deep Supervision Loop
                 for step in range(self.config.model.n_supervision_steps):
                     # Forward pass
-                    y, z, logits, q_hat = self.model(input_ids, attention_mask, y_init=y, z_init=z)
+                    y, z, logits, q_hat, param_logits = self.model(input_ids, attention_mask, y_init=y, z_init=z)
                     
                     # Calculate Loss (Cross Entropy)
-                    loss = self.criterion(logits.view(-1, self.config.model.vocab_size), labels.view(-1))
+                    main_loss = self.criterion(logits.view(-1, self.config.model.vocab_size), labels.view(-1))
+                    
+                    # Param Loss (GLINEAR)
+                    # We use the same labels for now, assuming the dataset provides token-level labels for params
+                    # or we might need a separate label field if the task differs.
+                    # For now, let's assume 'labels' contains the target tokens for both main and param tasks
+                    # (or we use a placeholder/mask if not available).
+                    param_loss = self.criterion(param_logits.view(-1, self.config.model.vocab_size), labels.view(-1))
+                    
+                    loss = main_loss + param_loss
                     
                     # ACT Loss (Q-head)
                     # Target: 1 if prediction is correct, 0 otherwise
@@ -111,8 +120,11 @@ class Trainer:
                 
                 batch_loss = 0
                 for step in range(self.config.model.n_supervision_steps):
-                    y, z, logits, q_hat = self.model(input_ids, attention_mask, y_init=y, z_init=z)
+                    y, z, logits, q_hat, param_logits = self.model(input_ids, attention_mask, y_init=y, z_init=z)
                     loss = self.criterion(logits.view(-1, self.config.model.vocab_size), labels.view(-1))
+                    # Add param loss to validation metric too
+                    param_loss = self.criterion(param_logits.view(-1, self.config.model.vocab_size), labels.view(-1))
+                    loss += param_loss
                     batch_loss += loss.item()
                     
                 total_loss += batch_loss / self.config.model.n_supervision_steps

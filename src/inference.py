@@ -3,6 +3,10 @@ from src.model import TinyRecursiveModel
 from src.config import Config
 from tokenizers import Tokenizer
 import os
+import re
+import json
+import csv
+from tqdm import tqdm
 
 class InferenceEngine:
     def __init__(self, checkpoint_path: str = None, config: Config = None):
@@ -41,7 +45,7 @@ class InferenceEngine:
         # We need to ensure len(ids) + max_new_tokens <= self.config.model.max_seq_len
         max_input_len = self.config.model.max_seq_len - max_new_tokens
         if len(ids) > max_input_len:
-            print(f"Warning: Prompt too long ({len(ids)} tokens). Truncating to {max_input_len} tokens to fit max_seq_len ({self.config.model.max_seq_len}).")
+            # print(f"Warning: Prompt too long ({len(ids)} tokens). Truncating to {max_input_len} tokens to fit max_seq_len ({self.config.model.max_seq_len}).")
             ids = ids[:max_input_len]
             
         input_ids = torch.tensor([ids], dtype=torch.long, device=self.device)
@@ -58,7 +62,7 @@ class InferenceEngine:
             # Deep Supervision Loop (Simulate "Thinking")
             logits = None
             for step in range(self.config.model.n_supervision_steps):
-                y, z, logits, q_hat = self.model(input_ids, attention_mask, y_init=y, z_init=z)
+                y, z, logits, q_hat, param_logits = self.model(input_ids, attention_mask, y_init=y, z_init=z)
                 # We only care about the last step's logits for generation
                 # But we must loop to let y and z evolve
             
@@ -88,7 +92,7 @@ class InferenceEngine:
         # Truncate to ensure we have space for generation
         max_input_len = self.config.model.max_seq_len - max_new_tokens
         if len(ids) > max_input_len:
-            print(f"Warning: Prompt too long ({len(ids)} tokens). Truncating to {max_input_len} tokens to fit max_seq_len ({self.config.model.max_seq_len}).")
+            # print(f"Warning: Prompt too long ({len(ids)} tokens). Truncating to {max_input_len} tokens to fit max_seq_len ({self.config.model.max_seq_len}).")
             ids = ids[:max_input_len]
             
         input_ids = torch.tensor([ids], dtype=torch.long, device=self.device)
@@ -105,7 +109,7 @@ class InferenceEngine:
             # Deep Supervision Loop (Simulate "Thinking")
             logits = None
             for step in range(self.config.model.n_supervision_steps):
-                y, z, logits, q_hat = self.model(input_ids, attention_mask, y_init=y, z_init=z)
+                y, z, logits, q_hat, param_logits = self.model(input_ids, attention_mask, y_init=y, z_init=z)
                 
                 # Check halting condition for the last token
                 # q_hat is [batch, seq_len]
@@ -155,7 +159,29 @@ class InferenceEngine:
         # Generate
         return self.generate(text, max_new_tokens=max_new_tokens)
 
-    def _parse_tool_call(prediction_raw: str, gt_name: str, gt_args: dict):
+    def generate_tool_call_adaptive(self, tools: str, query: str, max_new_tokens: int = 200) -> str:
+        # Construct ChatML text with Hermes template
+        # 1. System Prompt
+        text = "<|im_start|>system\n"
+        text += "You are a helpful assistant.\n"
+        text += "# Tools\n"
+        text += "You may call one or more functions to assist with the user query.\n"
+        text += "You are provided with function signatures within <tools></tools> XML tags:\n"
+        text += f"<tools>\n{tools}\n</tools>\n"
+        text += "For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n"
+        text += "<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call><|im_end|>\n"
+        
+        # 2. User Query
+        text += f"<|im_start|>user\n{query}<|im_end|>\n"
+        
+        # 3. Assistant Start
+        text += "<|im_start|>assistant\n"
+        
+        # Generate
+        return self.generate_adaptive(text, max_new_tokens=max_new_tokens)
+
+
+    def _parse_tool_call(self, prediction_raw: str, gt_name: str, gt_args: dict):
         """
         Parse a raw model output to extract the predicted tool name and arguments.
         The parsing is guided by the ground-truth tool name and arguments.
@@ -220,9 +246,6 @@ class InferenceEngine:
         }
 
     def evaluate_dataset(self, data_path: str, n_samples: int = None) -> float:
-        import json
-        import csv
-        from tqdm import tqdm
         
         if not os.path.exists(data_path):
             print(f"Dataset not found at {data_path}")
@@ -262,7 +285,7 @@ class InferenceEngine:
                     continue
                     
                 # Generate
-                prediction_raw = self.generate_tool_call(tools, query)
+                prediction_raw = self.generate_tool_call_adaptive(tools, query)
                 
                 # Parse Ground Truth
                 try:
@@ -274,7 +297,7 @@ class InferenceEngine:
                 gt_args = gt_json.get("arguments", {})
                 
                 # Parse Prediction with Hint
-                pred_json = self._parse_tool_call(prediction_raw, hint_name=gt_name)
+                pred_json = self._parse_tool_call(prediction_raw, gt_name=gt_name, gt_args=gt_args)
                 pred_name = pred_json.get("name", "")
                 pred_args = pred_json.get("arguments", {})
                 
