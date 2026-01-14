@@ -70,9 +70,12 @@ if __name__ == "__main__":
     input_file = "/home/namdv/workspace/TinyRecursiveModels/data/xlam_function_calling_60k_filtered.json"
     
     if os.path.exists(input_file):
-        # Train: 0-1000
-        format_xlam_data(input_file, "data/processed/xlam_1k_swift.json", start_idx=0, end_idx=1000)
-        # Val: 1000-1200
-        format_xlam_data(input_file, "data/processed/xlam_val_200_swift.json", start_idx=1000, end_idx=1200)
+        # # Train: 0-1000
+        # format_xlam_data(input_file, "data/processed/xlam_1k_swift.json", start_idx=0, end_idx=1000)
+        # # Val: 1000-1200
+        # format_xlam_data(input_file, "data/processed/xlam_val_200_swift.json", start_idx=1000, end_idx=1200)
+        format_xlam_data(input_file, "data/processed/xlam_train_20k_swift.json", start_idx=0, end_idx=20000)
+        format_xlam_data(input_file, "data/processed/xlam_val_2k_swift.json", start_idx=20000, end_idx=22000)
+        # format_xlam_data(input_file, "data/processed/xlam_test_5k_swift.json", start_idx=5000, end_idx=10000)
     else:
         print(f"Input file {input_file} not found.")
