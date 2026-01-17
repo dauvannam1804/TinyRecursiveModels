@@ -47,6 +47,64 @@ def test_dataset():
         decoded_labels = tokenizer.decode(valid_labels.tolist(), skip_special_tokens=False)
         print(f"\n[Decoded Labels (Training Target)]:\n{decoded_labels}")
         print("Label len:", len(labels))
+        
+        # New GLiNER fields
+        if "span_idx" in item:
+            print(f"\n[Span Indices]:\n{item['span_idx']}")
+            print(f"Span Indices Shape: {item['span_idx'].shape}")
+            
+        if "span_labels" in item:
+            print(f"\n[Span Labels]:\n{item['span_labels']}")
+            print(f"Span Labels Shape: {item['span_labels'].shape}")
+            
+        if "prompts_ids" in item:
+            print(f"\n[{'='*20} Decoded Prompts (Classes) {'='*20}]")
+            prompts_ids = item["prompts_ids"]
+            for cls_idx, p_ids in enumerate(prompts_ids):
+                # Filter padding
+                valid_ids = [pid for pid in p_ids.tolist() if pid != 0]
+                if not valid_ids:
+                    continue # Skip empty/padded rows
+                
+                decoded_prompt = tokenizer.decode(valid_ids)
+                print(f"  Class ID {cls_idx}: '{decoded_prompt}'")
+
+        # Decode Spans for visualization
+        if "span_idx" in item and "span_labels" in item and "prompts_ids" in item:
+            print(f"\n[{'='*20} Decoded Spans {'='*20}]")
+            span_idx = item["span_idx"]
+            span_labels = item["span_labels"]
+            prompts_ids = item["prompts_ids"]
+            
+            found_any = False
+            for idx, (start, end) in enumerate(span_idx):
+                # Filter padding (simple check)
+                if span_labels[idx] == -100:
+                    continue
+                    
+                found_any = True
+                
+                # Decode Span Text (Argument Value)
+                # Note: span indices are inclusive in dataset.py logic
+                span_token_ids = input_ids[start:end+1].tolist()
+                span_text = tokenizer.decode(span_token_ids)
+                
+                # Decode Label Name (Argument Name / Prompt)
+                label_idx = span_labels[idx]
+                if label_idx < len(prompts_ids):
+                    prompt_token_ids = prompts_ids[label_idx]
+                    # Filter trailing zeros (padding) assuming 0 is pad
+                    valid_prompt_ids = [pid for pid in prompt_token_ids.tolist() if pid != 0] # 0 might be pad or not? 
+                    # Dataset uses whatever tokenizer pad id is. But generated prompts_ids uses 0 or pad_token_id?
+                    # In dataset.py: `padded_prompts = torch.zeros(...)`. So 0 is pad.
+                    prompt_text = tokenizer.decode(valid_prompt_ids)
+                else:
+                    prompt_text = "Unknown"
+                
+                print(f"  Span [{start}:{end}] -> '{span_text}' | Label: '{prompt_text}' (ID: {label_idx})")
+            
+            if not found_any:
+                print("  No valid spans found in this sample.")
 
 
 if __name__ == "__main__":
