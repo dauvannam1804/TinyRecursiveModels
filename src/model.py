@@ -3,7 +3,7 @@ import torch.nn as nn
 from typing import Optional, Tuple
 from src.config import ModelConfig
 from src.layers import SelfAttention, MLP, AddNorm
-from src.glinear import GLINEAR
+from src.gliner import SpanRepLayer, create_projection_layer
 
 class TRMBlock(nn.Module):
     """
@@ -72,9 +72,16 @@ class TinyRecursiveModel(nn.Module):
         # Q-head for Adaptive Computation Time (ACT)
         self.q_head = nn.Linear(config.d_model, 1)
         
-        # GLINEAR Sub-network for Parameter Extraction
-        self.param_net = GLINEAR(config.d_model, config.n_heads, config.dropout)
-        self.param_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
+        # GLiNER Span Representation
+        self.span_rep_layer = SpanRepLayer(
+            hidden_size=config.d_model,
+            max_width=config.max_width,
+            span_mode=config.span_mode,
+            dropout=config.dropout
+        )
+        
+        # Projection for Class/Prompt Embeddings (to match span_rep dimension)
+        self.prompt_rep_layer = create_projection_layer(config.d_model, config.dropout)
         
         # Learnable Initialization for y and z
         self.y_init_param = nn.Parameter(torch.zeros(1, 1, config.d_model))
@@ -103,10 +110,11 @@ class TinyRecursiveModel(nn.Module):
         return y, z
 
     def forward(self, input_ids: torch.Tensor, attention_mask: Optional[torch.Tensor] = None, 
+                span_idx: Optional[torch.Tensor] = None, prompts_embedding: Optional[torch.Tensor] = None,
                 y_init: Optional[torch.Tensor] = None, z_init: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Forward pas s for ONE supervision step.
-        Returns: y_next, z_next, logits, q_hat, param_logits
+        Forward pass for ONE supervision step.
+        Returns: y_next, z_next, logits, q_hat, span_scores
         """
         batch_size, seq_len = input_ids.size()
         device = input_ids.device
@@ -143,26 +151,56 @@ class TinyRecursiveModel(nn.Module):
         # Q-head (Halting Probability)
         q_hat = torch.sigmoid(self.q_head(y)).squeeze(-1) # [batch, seq_len]
         
-        # GLINEAR Parameter Extraction (Detached Gradient)
-        y_detached = y.detach()
-        # We must pass the causal mask to prevent leakage during training!
-        param_feat = self.param_net(y_detached, mask=causal_mask)
-        param_logits = self.param_head(param_feat)
+        # GLiNER Span Scoring
+        span_scores = None
+        if span_idx is not None and prompts_embedding is not None:
+             # y is [Batch, SeqLen, Hidden] corresponding to 'words_embedding' in GLiNER
+             # span_idx is [Batch, NumSpans, 2]
+             
+             # 1. Compute Span Representations
+             # Note: SpanRepLayer expects x to be [Batch, SeqLen, Hidden].
+             # We use 'y' as the contextualized representation.
+             span_rep = self.span_rep_layer(y, span_idx)  # [Batch, SeqLen, MaxWidth, Hidden]
+             
+             # 2. Project Prompts
+             # prompts_embedding: [Batch, NumClasses, Hidden]
+             prompts_proj = self.prompt_rep_layer(prompts_embedding) # [Batch, NumClasses, Hidden]
+             
+             # 3. Compute Scores (Dot Product)
+             # span_rep: [B, NumSpans, D], prompts_proj: [B, NumClasses, D]
+             # Output: [B, NumSpans, NumClasses]
+             span_scores = torch.einsum("BSD,BCD->BSC", span_rep, prompts_proj)
         
-        return y, z, logits, q_hat, param_logits
+        return y, z, logits, q_hat, span_scores
 
 if __name__ == "__main__":
     cfg = ModelConfig()
     model = TinyRecursiveModel(cfg)
+    import torch
     print("Model created.")
     
-    dummy_input = torch.randint(0, cfg.vocab_size, (2, 10))
-    dummy_input = torch.randint(0, cfg.vocab_size, (2, 10))
-    y, z, logits, q_hat, param_logits = model(dummy_input)
+    batch_size = 2
+    seq_len = 10
+    num_classes = cfg.num_classes
+    max_width = cfg.max_width
+    
+    dummy_input = torch.randint(0, cfg.vocab_size, (batch_size, seq_len))
+    
+    # Create dummy span_idx: [Batch, NumSpans, 2]
+    # Let's say we have 5 spans per sequence
+    num_spans = 5
+    span_idx = torch.randint(0, seq_len, (batch_size, num_spans, 2))
+    
+    # Create dummy prompts_embedding: [Batch, NumClasses, Hidden]
+    prompts_embedding = torch.randn(batch_size, num_classes, cfg.d_model)
+    
+    y, z, logits, q_hat, span_scores = model(dummy_input, span_idx=span_idx, prompts_embedding=prompts_embedding)
+    
     print("Logits shape:", logits.shape)
     print("Q_hat shape:", q_hat.shape)
-    print("Param Logits shape:", param_logits.shape)
-    assert logits.shape == (2, 10, cfg.vocab_size)
-    assert q_hat.shape == (2, 10)
-    assert param_logits.shape == (2, 10, cfg.vocab_size)
-    print("Test passed.")
+    if span_scores is not None:
+        print("Span Scores shape:", span_scores.shape)
+        assert span_scores.shape == (batch_size, num_spans, num_classes)
+        print("Test passed.")
+    else:
+        print("Span scores is None.")

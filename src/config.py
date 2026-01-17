@@ -13,13 +13,19 @@ class ModelConfig:
     vocab_size: int = 50000 # Will be updated after tokenizer training
     max_seq_len: int = 512
     dropout: float = 0.1
+    
+    # GLiNER Specifics
+    max_width: int = 12
+    span_mode: str = "markerV0"
+    num_classes: int = 25 # Should match number of entity types
+    hidden_size: int = 256 # Alias for d_model compatibility with GLiNER layers
 
 @dataclass
 class TrainConfig:
     batch_size: int = 4
     learning_rate: float = 3e-4
     weight_decay: float = 0.01
-    num_epochs: int = 5
+    num_epochs: int = 2
     warmup_steps: int = 100
     grad_clip: float = 1.0
     deep_supervision_weight: float = 1.0 # Weight for intermediate losses
