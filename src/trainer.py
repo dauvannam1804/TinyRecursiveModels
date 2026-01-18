@@ -58,22 +58,23 @@ class Trainer:
                 # print("span_labels:", span_labels)
                 prompts_ids = batch.get("prompts_ids").to(self.device) if "prompts_ids" in batch else None
                 # print("prompts_ids:", prompts_ids)
-                
-                prompts_embedding = None
-                if prompts_ids is not None:
-                     # prompts_ids: [Batch, NumClasses, Length]
-                     B, C, L = prompts_ids.size()
-                     flat_ids = prompts_ids.view(B * C, L)
-                     embeds = self.model.token_embedding(flat_ids)
-                     # Mask padding (0)
-                     mask = (flat_ids != 0).float().unsqueeze(-1)
-                     sum_embeds = (embeds * mask).sum(dim=1)
-                     count = mask.sum(dim=1).clamp(min=1)
-                     avg_embeds = sum_embeds / count
-                     prompts_embedding = avg_embeds.view(B, C, -1)
 
                 # Deep Supervision Loop
                 for step in range(self.config.model.n_supervision_steps):
+                    
+                    prompts_embedding = None
+                    if prompts_ids is not None:
+                         # prompts_ids: [Batch, NumClasses, Length]
+                         B, C, L = prompts_ids.size()
+                         flat_ids = prompts_ids.view(B * C, L)
+                         embeds = self.model.token_embedding(flat_ids)
+                         # Mask padding (0)
+                         mask = (flat_ids != 0).float().unsqueeze(-1)
+                         sum_embeds = (embeds * mask).sum(dim=1)
+                         count = mask.sum(dim=1).clamp(min=1)
+                         avg_embeds = sum_embeds / count
+                         prompts_embedding = avg_embeds.view(B, C, -1)
+
                     # Forward pass
                     y, z, logits, q_hat, span_scores = self.model(
                         input_ids, 

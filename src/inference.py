@@ -37,49 +37,35 @@ class InferenceEngine:
 
     def generate(self, prompt: str, max_new_tokens: int = 50, temperature: float = 1.0) -> str:
         # Encode
-        # Encode
         encoded = self.tokenizer.encode(prompt)
         ids = [self.bos_token_id] + encoded.ids
         
-        # Truncate to ensure we have space for generation
-        # We need to ensure len(ids) + max_new_tokens <= self.config.model.max_seq_len
+        # Truncate
         max_input_len = self.config.model.max_seq_len - max_new_tokens
         if len(ids) > max_input_len:
-            # print(f"Warning: Prompt too long ({len(ids)} tokens). Truncating to {max_input_len} tokens to fit max_seq_len ({self.config.model.max_seq_len}).")
             ids = ids[:max_input_len]
             
         input_ids = torch.tensor([ids], dtype=torch.long, device=self.device)
         
         # Generation Loop
         for _ in range(max_new_tokens):
-            # Prepare inputs
             seq_len = input_ids.size(1)
-            attention_mask = torch.ones((1, seq_len), device=self.device) # Simple mask for now
+            attention_mask = torch.ones((1, seq_len), device=self.device)
             
-            # Initialize y and z (Learnable init)
             y, z = None, None
-            
-            # Deep Supervision Loop (Simulate "Thinking")
             logits = None
+            
+            # Deep Supervision Loop
             for step in range(self.config.model.n_supervision_steps):
-                y, z, logits, q_hat, param_logits = self.model(input_ids, attention_mask, y_init=y, z_init=z)
-                # We only care about the last step's logits for generation
-                # But we must loop to let y and z evolve
+                y, z, logits, q_hat, _ = self.model(input_ids, attention_mask, y_init=y, z_init=z)
             
-            # Get next token from the last position
             next_token_logits = logits[:, -1, :] / temperature
-            
-            # Greedy or Sampling (Here Greedy for math)
             next_token_id = torch.argmax(next_token_logits, dim=-1).unsqueeze(-1)
-            
-            # Append
             input_ids = torch.cat([input_ids, next_token_id], dim=-1)
             
-            # Stop condition
             if next_token_id.item() == self.eos_token_id:
                 break
                 
-        # Decode
         output_ids = input_ids[0].tolist()
         decoded = self.tokenizer.decode(output_ids)
         return decoded
@@ -89,54 +75,159 @@ class InferenceEngine:
         encoded = self.tokenizer.encode(prompt)
         ids = [self.bos_token_id] + encoded.ids
         
-        # Truncate to ensure we have space for generation
+        # Truncate
         max_input_len = self.config.model.max_seq_len - max_new_tokens
         if len(ids) > max_input_len:
-            # print(f"Warning: Prompt too long ({len(ids)} tokens). Truncating to {max_input_len} tokens to fit max_seq_len ({self.config.model.max_seq_len}).")
             ids = ids[:max_input_len]
             
         input_ids = torch.tensor([ids], dtype=torch.long, device=self.device)
         
         # Generation Loop
         for _ in range(max_new_tokens):
-            # Prepare inputs
             seq_len = input_ids.size(1)
-            attention_mask = torch.ones((1, seq_len), device=self.device) # Simple mask for now
+            attention_mask = torch.ones((1, seq_len), device=self.device)
             
-            # Initialize y and z (Learnable init)
             y, z = None, None
-            
-            # Deep Supervision Loop (Simulate "Thinking")
             logits = None
+            
             for step in range(self.config.model.n_supervision_steps):
-                y, z, logits, q_hat, param_logits = self.model(input_ids, attention_mask, y_init=y, z_init=z)
+                y, z, logits, q_hat, _ = self.model(input_ids, attention_mask, y_init=y, z_init=z)
                 
-                # Check halting condition for the last token
-                # q_hat is [batch, seq_len]
-                # We check the probability of halting for the last token
+                # Check halting
                 current_halting_prob = q_hat[0, -1].item()
                 if current_halting_prob > halting_threshold:
-                    # Optional: Print debug info
-                    # print(f"Halted at step {step+1}/{self.config.model.n_supervision_steps} with q_hat={current_halting_prob:.4f}")
                     break
             
-            # Get next token from the last position
             next_token_logits = logits[:, -1, :] / temperature
-            
-            # Greedy or Sampling (Here Greedy for math)
             next_token_id = torch.argmax(next_token_logits, dim=-1).unsqueeze(-1)
-            
-            # Append
             input_ids = torch.cat([input_ids, next_token_id], dim=-1)
             
-            # Stop condition
             if next_token_id.item() == self.eos_token_id:
                 break
                 
-        # Decode
         output_ids = input_ids[0].tolist()
         decoded = self.tokenizer.decode(output_ids)
         return decoded
+        
+    def verify_tool_call(self, full_text: str, tools_json_str: str) -> dict:
+        """
+        Verify the generated tool call using GLiNER span scores.
+        Strategy:
+        1. Parse tools to get label names (classes).
+        2. Identify spans of arguments in the generated text.
+        3. Run forward pass with span_idx and prompts_embedding.
+        4. Return confidence scores for each argument.
+        """
+        # 1. Parse Tools & Create Prompts
+        try:
+            tools_list = json.loads(tools_json_str)
+            label_names = []
+            for t in tools_list:
+                if "function" in t:
+                    func = t["function"]
+                    if "parameters" in func and "properties" in func["parameters"]: 
+                         label_names.extend(func["parameters"]["properties"].keys())
+                    elif "parameters" in func: 
+                         label_names.extend(func["parameters"].keys())
+            label_names = list(dict.fromkeys(label_names)) # Unique
+        except:
+             return {"error": "Invalid tools JSON"}
+             
+        if not label_names:
+            return {"status": "No params to verify"}
+
+        prompts_ids = [self.tokenizer.encode(name).ids for name in label_names]
+        
+        # 2. Parse Text to find Spans
+        # We assume full_text contains <tool_call>... content ...</tool_call>
+        # We need to find the "arguments" JSON
+        match = re.search(r'<tool_call>(.*?)</tool_call>', full_text, re.DOTALL)
+        if not match:
+            return {"error": "No tool_call tag found"}
+            
+        content = match.group(1).strip()
+        try:
+            tool_call_json = json.loads(content)
+            args = tool_call_json.get("arguments", {})
+        except:
+            return {"error": "Invalid tool_call JSON content"}
+
+        # Encode full text to find span indices
+        # Note: Ideally we should use the same IDs we generated, but here we re-tokenize
+        full_encoding = self.tokenizer.encode(full_text)
+        input_ids = torch.tensor([full_encoding.ids], dtype=torch.long, device=self.device)
+        attention_mask = torch.ones_like(input_ids)
+        
+        span_indices = []
+        span_labels_dummy = [] # We don't need labels for inference, but we need to track which arg maps to which span
+        extracted_args = []
+        
+        # Simple string find approach (Robustness similar to dataset.py is better but complex to copy-paste fully)
+        # We search inside the full string
+        tool_call_start_char = full_text.find("<tool_call>") + len("<tool_call>")
+        
+        for arg_name, arg_val in args.items():
+            if arg_name in label_names:
+                val_str = str(arg_val)
+                # Search within content
+                # Warning: duplicate values issue is not handled here for simplicity
+                char_start = full_text.find(val_str, tool_call_start_char)
+                if char_start != -1:
+                    char_end = char_start + len(val_str) - 1
+                    token_start = full_encoding.char_to_token(char_start)
+                    token_end = full_encoding.char_to_token(char_end)
+                    
+                    if token_start is not None and token_end is not None:
+                        span_indices.append([token_start, token_end])
+                        extracted_args.append(arg_name)
+        
+        if not span_indices:
+            return {"status": "No argument spans found mapping to tokens"}
+            
+        # Prepare Tensors
+        span_idx_tensor = torch.tensor([span_indices], dtype=torch.long, device=self.device)
+        
+        # Prepare Prompts Embedding
+        # Manual embedding generation as in Trainer/Dataset
+        prompts_ids_tensor = torch.zeros((1, len(label_names), 10), dtype=torch.long, device=self.device) # Max len 10
+        for i, p_ids in enumerate(prompts_ids):
+            l = min(len(p_ids), 10)
+            prompts_ids_tensor[0, i, :l] = torch.tensor(p_ids[:l], device=self.device)
+            
+        # Generate Prompts Embedding
+        with torch.no_grad():
+             # Flatten
+            B, C, L = prompts_ids_tensor.size()
+            flat_ids = prompts_ids_tensor.view(B * C, L)
+            embeds = self.model.token_embedding(flat_ids)
+            mask = (flat_ids != 0).float().unsqueeze(-1)
+            sum_embeds = (embeds * mask).sum(dim=1)
+            count = mask.sum(dim=1).clamp(min=1)
+            avg_embeds = sum_embeds / count
+            prompts_embedding = avg_embeds.view(B, C, -1)
+            
+            # 3. Forward Pass for Verification
+            y, z, logits, q_hat, span_scores = self.model(
+                input_ids, attention_mask, 
+                span_idx=span_idx_tensor, 
+                prompts_embedding=prompts_embedding
+            )
+            
+            # 4. Analyze Scores
+            # span_scores: [1, NumSpans, NumClasses]
+            probs = torch.softmax(span_scores, dim=-1)
+            results = {}
+            for i, arg_name in enumerate(extracted_args):
+                # Find index of this arg class
+                class_idx = label_names.index(arg_name)
+                confidence = probs[0, i, class_idx].item()
+                results[arg_name] = {
+                    "confidence": confidence, 
+                    "span": span_indices[i],
+                    "verification": "HIGH" if confidence > 0.5 else "LOW"
+                }
+                
+            return results
 
     def generate_tool_call(self, tools: str, query: str, max_new_tokens: int = 200) -> str:
         # Construct ChatML text with Hermes template
